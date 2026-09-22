@@ -581,8 +581,8 @@ function renderLocationPicker() {
 async function goToApp() {
   state.screen = "app";
   state.category = "TBG";
-  state.calMonth = new Date().toISOString().slice(0, 7);
-  state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10);
+  state.calMonth = localMonthOf(new Date());
+  state.calWeekStart = isoOf(mondayOf(new Date()));
   subscribeRooms(render);
   subscribeRepairs(render);
   subscribeOrders(render);
@@ -1510,6 +1510,9 @@ function mondayOf(dateObj) {
 function isoOf(dateObj) {
   return `${dateObj.getFullYear()}-${pad2(dateObj.getMonth() + 1)}-${pad2(dateObj.getDate())}`;
 }
+function localMonthOf(dateObj) {
+  return `${dateObj.getFullYear()}-${pad2(dateObj.getMonth() + 1)}`;
+}
 function getWeekDates(mondayIso) {
   const [y, m, d] = mondayIso.split("-").map(Number);
   const start = new Date(y, m - 1, d);
@@ -1551,9 +1554,9 @@ async function ensureRecurringPinboardTasks() {
 }
 
 function renderWeekView() {
-  if (!state.calWeekStart) state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10);
+  if (!state.calWeekStart) state.calWeekStart = isoOf(mondayOf(new Date()));
   const days = getWeekDates(state.calWeekStart);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = isoOf(new Date());
   const firstDay = days[0], lastDay = days[6];
   const rangeLabel = firstDay.month === lastDay.month
     ? `${firstDay.day}.–${lastDay.day}. ${MONTH_LABELS[firstDay.month]} ${firstDay.year}`
@@ -1571,7 +1574,7 @@ function renderWeekView() {
     </div>`);
   nav.querySelector("#week-prev").addEventListener("click", () => { state.calWeekStart = shiftWeek(state.calWeekStart, -1); render(); });
   nav.querySelector("#week-next").addEventListener("click", () => { state.calWeekStart = shiftWeek(state.calWeekStart, 1); render(); });
-  nav.querySelector("#week-today").addEventListener("click", () => { state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10); render(); });
+  nav.querySelector("#week-today").addEventListener("click", () => { state.calWeekStart = isoOf(mondayOf(new Date())); render(); });
   wrap.appendChild(nav);
 
   const grid = el(`<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2"></div>`);
@@ -1630,7 +1633,7 @@ function renderCalendarSection(isAdmin) {
       quickForm.innerHTML = `
         <div class="text-sm font-medium mb-3">Neuer Termin / Abwesenheit</div>
         <div class="grid sm:grid-cols-2 gap-2 mb-2">
-          <input id="qf-date" type="date" class="px-2 py-1.5 text-sm" value="${new Date().toISOString().slice(0,10)}">
+          <input id="qf-date" type="date" class="px-2 py-1.5 text-sm" value="${isoOf(new Date())}">
           <select id="qf-type" class="px-2 py-1.5 text-sm">
             <option value="event">Veranstaltung</option>
             <option value="absence">Abwesenheit</option>
@@ -1684,7 +1687,7 @@ function renderCalendarSection(isAdmin) {
       recForm.classList.toggle("hidden");
       if (recForm.classList.contains("hidden")) return;
       recForm.innerHTML = "";
-      recForm.appendChild(el(`
+      recForm.innerHTML = `
         <div class="grid sm:grid-cols-3 gap-2 mb-2">
           <input id="rf-title" type="text" placeholder="Titel" class="px-2 py-1.5 text-sm sm:col-span-1">
           <select id="rf-weekday" class="px-2 py-1.5 text-sm">
@@ -1696,7 +1699,7 @@ function renderCalendarSection(isAdmin) {
           <input id="rf-pin" type="checkbox" class="w-4 h-4">
           Jede Woche automatisch auf die Pinnwand stellen
         </label>
-        <button id="rf-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>`));
+        <button id="rf-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>`;
       recForm.querySelector("#rf-save").addEventListener("click", async () => {
         const title = recForm.querySelector("#rf-title").value.trim();
         if (!title) return;
@@ -1724,7 +1727,7 @@ function renderCalendarSection(isAdmin) {
     return wrap;
   }
 
-  if (!state.calMonth) state.calMonth = new Date().toISOString().slice(0, 7);
+  if (!state.calMonth) state.calMonth = localMonthOf(new Date());
   const { weeks, y, month } = getMonthMatrix(state.calMonth);
   const nav = el(`
     <div class="flex items-center justify-between mb-3">
@@ -1736,7 +1739,7 @@ function renderCalendarSection(isAdmin) {
   nav.querySelector("#cal-next").addEventListener("click", () => { state.calMonth = shiftMonth(state.calMonth, 1); render(); });
   wrap.appendChild(nav);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = isoOf(new Date());
   const grid = el(`<div class="grid grid-cols-7 gap-1 text-center"></div>`);
   WEEKDAY_LABELS.forEach(w => grid.appendChild(el(`<div class="text-xs pb-1" style="color:var(--text-muted)">${w}</div>`)));
   weeks.forEach(week => {
