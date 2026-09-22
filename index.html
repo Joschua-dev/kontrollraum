@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kontrollraum</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#C07C21">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kontrollraum">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -112,6 +118,22 @@
   .nav-item[aria-current="true"] { background: var(--surface-2); color: var(--text); }
   .nav-item[aria-current="true"] .nav-dot { background: var(--accent); }
   .soon-badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+  .success-pulse {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.5);
+    z-index: 100; pointer-events: none; opacity: 0;
+    width: 84px; height: 84px; border-radius: 50%;
+    background: var(--tbg); color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 40px; box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    animation: successPop 0.8s ease-out forwards;
+  }
+  @keyframes successPop {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+    30% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+    45% { transform: translate(-50%, -50%) scale(0.95); }
+    75% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) { .success-pulse { display: none; } }
 </style>
 </head>
 <body>
@@ -163,6 +185,8 @@ let calRecurring = [];
 let calRecurringUnsub = null;
 let infoSections = [];
 let infoUnsub = null;
+let orderTemplates = [];
+let orderTemplatesUnsub = null;
 let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, repairShowPicker: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, orderShowPicker: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false, currentStandortId: null };
 
 const REPAIR_STATUSES = [
@@ -236,6 +260,14 @@ function formatDate(ts) {
   const d = new Date(ts);
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" }) + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 }
+function triggerSuccessPulse() {
+  const pulse = document.createElement("div");
+  pulse.className = "success-pulse";
+  pulse.textContent = "✓";
+  document.body.appendChild(pulse);
+  setTimeout(() => pulse.remove(), 850);
+}
+
 function getAuthorName() {
   if (currentUser.role === "admin") return currentUser.name;
   const storeKey = "kr_display_name_" + currentUser.role;
@@ -326,6 +358,14 @@ function subscribeInfo(cb) {
     infoSections = doc.exists ? (doc.data().sections || []) : [];
     cb();
   }, err => console.error("info sub error", err));
+}
+
+function subscribeOrderTemplates(cb) {
+  if (orderTemplatesUnsub) orderTemplatesUnsub();
+  orderTemplatesUnsub = db.collection("settings").doc("orderTemplates").onSnapshot(doc => {
+    orderTemplates = doc.exists ? (doc.data().items || []) : [];
+    cb();
+  }, err => console.error("order templates sub error", err));
 }
 
 async function uploadRepairImage(file) {
@@ -560,7 +600,7 @@ function renderLocationPicker() {
       const isLast = r.id === lastId;
       const btn = el(`
         <button class="card w-full p-4 text-left flex items-center justify-between" style="${isLast ? 'border-color:var(--accent)' : ''}">
-          <span class="text-sm font-medium">${escapeHtml(r.name)}</span>
+          <span class="text-sm font-medium">${r.icon ? escapeHtml(r.icon) + " " : ""}${escapeHtml(r.name)}</span>
           ${isLast ? '<span class="text-xs" style="color:var(--accent)">zuletzt</span>' : ''}
         </button>`);
       btn.addEventListener("click", async () => {
@@ -589,6 +629,7 @@ async function goToApp() {
   subscribePinboard(render);
   subscribeCalendar(render);
   subscribeInfo(render);
+  subscribeOrderTemplates(render);
   render();
 }
 
@@ -603,6 +644,7 @@ function logout() {
   if (calEventsUnsub) { calEventsUnsub(); calEventsUnsub = null; }
   if (calRecurringUnsub) { calRecurringUnsub(); calRecurringUnsub = null; }
   if (infoUnsub) { infoUnsub(); infoUnsub = null; }
+  if (orderTemplatesUnsub) { orderTemplatesUnsub(); orderTemplatesUnsub = null; }
   state.screen = "login";
   render();
 }
@@ -643,12 +685,29 @@ function renderAppShell() {
     </div>`);
 
   const nav = wrap.querySelector("#nav");
-  NAV_ITEMS.concat(isAdmin ? [{ key: "settings", label: "Einstellungen", ready: true }] : []).forEach(item => {
-    const active = state.screen === "app" && (state.currentSection || "rooms") === item.key;
+  function navBadgeCount(key) {
+    if (key === "reparaturen") {
+      return isAdmin ? repairs.filter(t => t.status !== "erledigt").length
+        : (state.currentStandortId ? repairs.filter(t => t.roomId === state.currentStandortId && t.status !== "erledigt").length : 0);
+    }
+    if (key === "bestellungen") {
+      return isAdmin ? orders.filter(o => o.status !== "erledigt").length
+        : (state.currentStandortId ? orders.filter(o => o.roomId === state.currentStandortId && o.status !== "erledigt").length : 0);
+    }
+    if (key === "pinnwand") return pinItems.filter(p => !p.done).length;
+    return 0;
+  }
+  const navList = (isAdmin ? [{ key: "dashboard", label: "Übersicht", ready: true }] : [])
+    .concat(NAV_ITEMS)
+    .concat(isAdmin ? [{ key: "settings", label: "Einstellungen", ready: true }] : []);
+  navList.forEach(item => {
+    const active = state.screen === "app" && (state.currentSection || (isAdmin ? "dashboard" : "rooms")) === item.key;
+    const badge = navBadgeCount(item.key);
     const btn = el(`
       <button class="nav-item flex items-center gap-2 px-3 py-2 rounded-lg text-sm whitespace-nowrap md:whitespace-normal text-left" ${active ? 'aria-current="true"' : ''} style="color:var(--text)">
         <span class="nav-dot w-1.5 h-1.5 rounded-full" style="background:var(--border)"></span>
         <span>${escapeHtml(item.label)}</span>
+        ${badge > 0 ? `<span class="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:var(--danger); color:#fff; min-width:16px; text-align:center">${badge}</span>` : ''}
         ${!item.ready ? '<span class="soon-badge ml-auto hidden md:inline">bald</span>' : ''}
       </button>`);
     btn.addEventListener("click", () => {
@@ -678,24 +737,30 @@ function renderAppShell() {
 
   if (!isAdmin && state.currentStandortId) {
     const currentRoom = rooms.find(r => r.id === state.currentStandortId);
+    const openRepairs = repairs.filter(t => t.roomId === state.currentStandortId && t.status !== "erledigt").length;
+    const openOrders = orders.filter(o => o.roomId === state.currentStandortId && o.status !== "erledigt").length;
+    const statusBits = [];
+    if (openRepairs) statusBits.push(`${openRepairs} Reparatur${openRepairs === 1 ? "" : "en"} offen`);
+    if (openOrders) statusBits.push(`${openOrders} Bestellung${openOrders === 1 ? "" : "en"} offen`);
     const banner = el(`
-      <div class="flex items-center justify-between gap-2 px-4 md:px-8 py-2 text-sm" style="background:var(--surface-2); border-bottom:1px solid var(--border)">
-        <span>📍 Aktuell: <span class="font-medium">${escapeHtml(currentRoom ? currentRoom.name : "–")}</span></span>
+      <div class="flex items-center justify-between gap-2 px-4 md:px-8 py-2 text-sm flex-wrap" style="background:var(--surface-2); border-bottom:1px solid var(--border)">
+        <span>📍 Aktuell: <span class="font-medium">${escapeHtml(currentRoom ? currentRoom.name : "–")}</span>${statusBits.length ? ` <span style="color:var(--text-muted)">· ${statusBits.join(" · ")}</span>` : ` <span style="color:var(--text-muted)">· alles erledigt ✓</span>`}</span>
         <button id="switch-location" class="text-xs font-medium" style="color:var(--accent)">Wechseln</button>
       </div>`);
     banner.querySelector("#switch-location").addEventListener("click", () => goToLocationPicker());
     main.appendChild(banner);
   }
 
-  const section = state.currentSection || "rooms";
-  if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
+  const section = state.currentSection || (isAdmin ? "dashboard" : "rooms");
+  if (section === "dashboard") main.appendChild(renderDashboardSection());
+  else if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
   else if (section === "reparaturen") main.appendChild(renderRepairsSection());
   else if (section === "bestellungen") main.appendChild(renderOrdersSection());
   else if (section === "pinnwand") main.appendChild(renderPinboardSection());
   else if (section === "kalender") main.appendChild(renderCalendarSection(isAdmin));
   else if (section === "infos") main.appendChild(renderInfoSection(isAdmin));
   else if (section === "settings") main.appendChild(renderSettingsSection());
-  else main.appendChild(renderComingSoon(NAV_ITEMS.find(n => n.key === section).label));
+  else main.appendChild(renderComingSoon(NAV_ITEMS.find(n => n.key === section) ? NAV_ITEMS.find(n => n.key === section).label : ""));
 
   const toggleTheme = () => applyTheme(currentThemeIsDark() ? "light" : "dark") || render();
   wrap.querySelector("#theme-toggle").addEventListener("click", toggleTheme);
@@ -726,6 +791,69 @@ function renderComingSoon(label) {
         <div class="text-sm" style="color:var(--text-muted)">Kommt als Nächstes.</div>
       </div>
     </div>`);
+}
+
+/* =========================================================================
+   DASHBOARD (Admin)
+   ========================================================================= */
+function renderDashboardSection() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-6">
+      <h1 class="text-xl font-semibold">Übersicht</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Alle Hamburger Standorte auf einen Blick</div>
+    </div>`));
+
+  const totalRepairs = repairs.filter(t => t.status !== "erledigt").length;
+  const totalOrders = orders.filter(o => o.status !== "erledigt").length;
+  const totalPins = pinItems.filter(p => !p.done).length;
+
+  const stats = el(`<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6"></div>`);
+  [
+    { label: "Offene Reparaturen", value: totalRepairs, color: totalRepairs ? "var(--danger)" : "var(--success)" },
+    { label: "Offene Bestellungen", value: totalOrders, color: totalOrders ? "var(--accent)" : "var(--success)" },
+    { label: "Offene Pinnwand-Aufgaben", value: totalPins, color: totalPins ? "var(--accent)" : "var(--success)" }
+  ].forEach(s => {
+    stats.appendChild(el(`
+      <div class="card p-4">
+        <div class="text-2xl font-semibold" style="color:${s.color}">${s.value}</div>
+        <div class="text-xs mt-0.5" style="color:var(--text-muted)">${s.label}</div>
+      </div>`));
+  });
+  wrap.appendChild(stats);
+
+  wrap.appendChild(el(`<div class="text-sm font-medium mb-2">Pro Standort</div>`));
+  if (!rooms.length) {
+    wrap.appendChild(el(`<div class="card p-6 text-center text-sm" style="color:var(--text-muted)">Noch keine Standorte angelegt.</div>`));
+    return wrap;
+  }
+  const list = el(`<div class="space-y-2"></div>`);
+  rooms.forEach(r => {
+    const rRepairs = repairs.filter(t => t.roomId === r.id && t.status !== "erledigt").length;
+    const rOrders = orders.filter(o => o.roomId === r.id && o.status !== "erledigt").length;
+    const row = el(`
+      <div class="card p-3 flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2">
+          ${r.icon ? `<span class="text-lg">${escapeHtml(r.icon)}</span>` : ""}
+          <span class="text-sm font-medium">${escapeHtml(r.name)}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <button class="jump-repair px-2 py-1 rounded-full" style="background:${rRepairs ? 'var(--danger-soft)' : 'var(--surface-2)'}; color:${rRepairs ? 'var(--danger)' : 'var(--text-muted)'}">${rRepairs} Reparaturen</button>
+          <button class="jump-order px-2 py-1 rounded-full" style="background:${rOrders ? 'var(--tca-soft)' : 'var(--surface-2)'}; color:${rOrders ? 'var(--tca)' : 'var(--text-muted)'}">${rOrders} Bestellungen</button>
+        </div>
+      </div>`);
+    row.querySelector(".jump-repair").addEventListener("click", () => {
+      state.currentSection = "reparaturen"; state.repairRoomId = r.id; state.repairShowPicker = false; render();
+    });
+    row.querySelector(".jump-order").addEventListener("click", () => {
+      state.currentSection = "bestellungen"; state.orderRoomId = r.id; state.orderShowPicker = false; render();
+    });
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+
+  return wrap;
 }
 
 /* =========================================================================
@@ -767,7 +895,7 @@ function renderRoomsSection(isAdmin) {
       const card = el(`
         <button class="card p-4 text-left hover:opacity-90">
           <div class="flex items-start justify-between mb-2">
-            <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+            <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
             <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
           </div>
           <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(r.address || "Keine Adresse hinterlegt")}</div>
@@ -846,9 +974,15 @@ function renderRoomDetail(isAdmin) {
 function renderRoomForm(room) {
   const form = el(`<div></div>`);
   const nameRow = el(`
-    <div class="mb-3">
-      <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Name</div>
-      <input id="f-name" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(room ? room.name : "")}">
+    <div class="mb-3 flex gap-2">
+      <div style="width:64px">
+        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Icon</div>
+        <input id="f-icon" type="text" maxlength="4" class="w-full px-2 py-2 text-sm text-center" style="font-size:20px" value="${escapeHtml(room ? (room.icon || "") : "")}" placeholder="🏠">
+      </div>
+      <div class="flex-1">
+        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Name</div>
+        <input id="f-name" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(room ? room.name : "")}">
+      </div>
     </div>`);
   form.appendChild(nameRow);
   const catRow = el(`
@@ -877,6 +1011,7 @@ function renderRoomForm(room) {
   saveBtn.addEventListener("click", async () => {
     const data = {
       name: form.querySelector("#f-name").value.trim(),
+      icon: form.querySelector("#f-icon").value.trim(),
       category: form.querySelector("#f-category").value
     };
     ROOM_FIELDS.forEach(f => { data[f.key] = form.querySelector(`#f-${f.key}`).value.trim(); });
@@ -926,7 +1061,7 @@ function renderRepairRoomPicker() {
     const card = el(`
       <button class="card p-4 text-left hover:opacity-90">
         <div class="flex items-start justify-between mb-2">
-          <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+          <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
           <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
         </div>
         <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Meldungen" : openCount + " offen"}</div>
@@ -1083,6 +1218,7 @@ function renderRepairDetail() {
     const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
     b.addEventListener("click", async () => {
       await db.collection("repairs").doc(t.id).update({ status: s.key, updatedAt: Date.now() });
+      if (s.key === "erledigt" && t.status !== "erledigt") triggerSuccessPulse();
     });
     statusBox.appendChild(b);
   });
@@ -1173,7 +1309,7 @@ function renderOrderRoomPicker() {
     const card = el(`
       <button class="card p-4 text-left hover:opacity-90">
         <div class="flex items-start justify-between mb-2">
-          <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+          <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
           <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
         </div>
         <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Bestellungen" : openCount + " offen"}</div>
@@ -1201,6 +1337,38 @@ function renderOrderBoard() {
   wrap.appendChild(header);
   header.querySelector("#back-to-picker").addEventListener("click", () => { state.orderRoomId = null; state.orderShowPicker = true; render(); });
   header.querySelector("#new-order-btn").addEventListener("click", () => openOrderForm(room.id));
+
+  const tplBox = el(`<div class="flex items-center gap-2 flex-wrap mb-5"></div>`);
+  orderTemplates.forEach(tpl => {
+    const chip = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ ${escapeHtml(tpl)}</button>`);
+    chip.addEventListener("click", () => {
+      const quantity = prompt(`Menge für "${tpl}" (optional):`) || "";
+      db.collection("orders").add({
+        roomId: room.id, title: tpl, quantity: quantity.trim(), notes: "",
+        status: "offen", assignedTo: "", comments: [],
+        createdBy: getAuthorName(), createdAt: Date.now(), updatedAt: Date.now()
+      }).then(ref => { state.openOrderId = ref.id; render(); });
+    });
+    tplBox.appendChild(chip);
+  });
+  if (currentUser.role === "admin") {
+    const manageBtn = el(`<button class="text-xs" style="color:var(--text-muted)">Vorlagen verwalten</button>`);
+    manageBtn.addEventListener("click", async () => {
+      const action = prompt("Vorlage hinzufügen: Namen eingeben.\nVorlage entfernen: Namen exakt so eingeben wie vorhanden und mit \"-\" davor, z.B. -Klopapier");
+      if (!action || !action.trim()) return;
+      const trimmed = action.trim();
+      let next = orderTemplates.slice();
+      if (trimmed.startsWith("-")) {
+        const toRemove = trimmed.slice(1).trim();
+        next = next.filter(t => t !== toRemove);
+      } else {
+        if (!next.includes(trimmed)) next.push(trimmed);
+      }
+      await db.collection("settings").doc("orderTemplates").set({ items: next });
+    });
+    tplBox.appendChild(manageBtn);
+  }
+  wrap.appendChild(tplBox);
 
   const roomOrders = orders.filter(o => o.roomId === room.id);
   const cols = el(`<div class="grid md:grid-cols-2 gap-4 mb-6"></div>`);
@@ -1345,6 +1513,7 @@ function renderOrderDetail() {
     const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
     b.addEventListener("click", async () => {
       await db.collection("orders").doc(o.id).update({ status: s.key, updatedAt: Date.now() });
+      if (s.key === "erledigt" && o.status !== "erledigt") triggerSuccessPulse();
     });
     statusBox.appendChild(b);
   });
@@ -1457,6 +1626,7 @@ function renderPinRow(p) {
     </div>`);
   row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
     await db.collection("pinboard").doc(p.id).update({ done: e.target.checked });
+    if (e.target.checked) triggerSuccessPulse();
   });
   row.querySelector(".prio-badge").addEventListener("click", async () => {
     const nextIdx = (pinPriorityRank(p.priority) + 1) % PIN_PRIORITIES.length;
@@ -2087,6 +2257,11 @@ async function boot() {
   render();
 }
 boot();
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW registration failed", e));
+  });
+}
 </script>
 </body>
 </html>
