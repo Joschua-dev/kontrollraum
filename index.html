@@ -151,7 +151,15 @@ let roomsUnsub = null;
 let repairsUnsub = null;
 let orders = [];
 let ordersUnsub = null;
-let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false };
+let pinItems = [];
+let pinUnsub = null;
+let calEvents = [];
+let calEventsUnsub = null;
+let calRecurring = [];
+let calRecurringUnsub = null;
+let infoSections = [];
+let infoUnsub = null;
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, showPinDone: false, calMonth: null, calSelectedDate: null, infoEditing: false };
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -276,6 +284,35 @@ function subscribeOrders(cb) {
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     cb();
   }, err => console.error("orders sub error", err));
+}
+
+function subscribePinboard(cb) {
+  if (pinUnsub) pinUnsub();
+  pinUnsub = db.collection("pinboard").orderBy("createdAt", "desc").onSnapshot(snap => {
+    pinItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("pinboard sub error", err));
+}
+
+function subscribeCalendar(cb) {
+  if (calEventsUnsub) calEventsUnsub();
+  calEventsUnsub = db.collection("calendarEvents").orderBy("date").onSnapshot(snap => {
+    calEvents = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("calendar sub error", err));
+  if (calRecurringUnsub) calRecurringUnsub();
+  calRecurringUnsub = db.collection("calendarRecurring").onSnapshot(snap => {
+    calRecurring = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("recurring sub error", err));
+}
+
+function subscribeInfo(cb) {
+  if (infoUnsub) infoUnsub();
+  infoUnsub = db.collection("info").doc("main").onSnapshot(doc => {
+    infoSections = doc.exists ? (doc.data().sections || []) : [];
+    cb();
+  }, err => console.error("info sub error", err));
 }
 
 async function uploadRepairImage(file) {
@@ -467,9 +504,13 @@ function renderPinPad(container, ctx) {
 async function goToApp() {
   state.screen = "app";
   state.category = "TBG";
+  state.calMonth = new Date().toISOString().slice(0, 7);
   subscribeRooms(render);
   subscribeRepairs(render);
   subscribeOrders(render);
+  subscribePinboard(render);
+  subscribeCalendar(render);
+  subscribeInfo(render);
   render();
 }
 
@@ -479,6 +520,10 @@ function logout() {
   if (roomsUnsub) { roomsUnsub(); roomsUnsub = null; }
   if (repairsUnsub) { repairsUnsub(); repairsUnsub = null; }
   if (ordersUnsub) { ordersUnsub(); ordersUnsub = null; }
+  if (pinUnsub) { pinUnsub(); pinUnsub = null; }
+  if (calEventsUnsub) { calEventsUnsub(); calEventsUnsub = null; }
+  if (calRecurringUnsub) { calRecurringUnsub(); calRecurringUnsub = null; }
+  if (infoUnsub) { infoUnsub(); infoUnsub = null; }
   state.screen = "login";
   render();
 }
@@ -490,9 +535,9 @@ const NAV_ITEMS = [
   { key: "rooms", label: "Räume", ready: true },
   { key: "reparaturen", label: "Reparaturen", ready: true },
   { key: "bestellungen", label: "Bestellungen", ready: true },
-  { key: "pinnwand", label: "Pinnwand", ready: false },
-  { key: "kalender", label: "Kalender", ready: false },
-  { key: "infos", label: "Infos", ready: false }
+  { key: "pinnwand", label: "Pinnwand", ready: true },
+  { key: "kalender", label: "Kalender", ready: true },
+  { key: "infos", label: "Infos", ready: true }
 ];
 
 function renderAppShell() {
@@ -535,6 +580,8 @@ function renderAppShell() {
       if (item.key !== "reparaturen") state.repairRoomId = null;
       state.openOrderId = null;
       if (item.key !== "bestellungen") state.orderRoomId = null;
+      if (item.key !== "kalender") state.calSelectedDate = null;
+      if (item.key !== "infos") state.infoEditing = false;
       render();
     });
     nav.appendChild(btn);
@@ -553,6 +600,9 @@ function renderAppShell() {
   if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
   else if (section === "reparaturen") main.appendChild(renderRepairsSection());
   else if (section === "bestellungen") main.appendChild(renderOrdersSection());
+  else if (section === "pinnwand") main.appendChild(renderPinboardSection());
+  else if (section === "kalender") main.appendChild(renderCalendarSection(isAdmin));
+  else if (section === "infos") main.appendChild(renderInfoSection(isAdmin));
   else if (section === "settings") main.appendChild(renderSettingsSection());
   else main.appendChild(renderComingSoon(NAV_ITEMS.find(n => n.key === section).label));
 
@@ -570,6 +620,9 @@ function renderAppShell() {
   }
   if (state.openOrderId) {
     wrap.appendChild(renderOrderDetail());
+  }
+  if (state.calSelectedDate) {
+    wrap.appendChild(renderCalendarDayDetail(isAdmin));
   }
   return wrap;
 }
@@ -1232,6 +1285,374 @@ function renderOrderDetail() {
   });
 
   return overlay;
+}
+
+/* =========================================================================
+   PINNWAND
+   ========================================================================= */
+function renderPinboardSection() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in max-w-2xl"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Pinnwand</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Was steht diese Woche an?</div>
+    </div>`));
+
+  const addRow = el(`
+    <div class="flex gap-2 mb-5">
+      <input id="pin-input" type="text" class="flex-1 px-3 py-2 text-sm" placeholder="Neue Aufgabe…">
+      <button id="pin-add" class="btn btn-accent px-3 py-2 text-sm">+ Hinzufügen</button>
+    </div>`);
+  wrap.appendChild(addRow);
+  const addPin = async () => {
+    const input = addRow.querySelector("#pin-input");
+    const text = input.value.trim();
+    if (!text) return;
+    await db.collection("pinboard").add({ text, done: false, createdBy: getAuthorName(), createdAt: Date.now() });
+    input.value = "";
+  };
+  addRow.querySelector("#pin-add").addEventListener("click", addPin);
+  addRow.querySelector("#pin-input").addEventListener("keydown", (e) => { if (e.key === "Enter") addPin(); });
+
+  const open = pinItems.filter(p => !p.done);
+  const done = pinItems.filter(p => p.done);
+
+  const openList = el(`<div class="space-y-2 mb-6"></div>`);
+  if (!open.length) openList.appendChild(el(`<div class="card p-6 text-center text-sm" style="color:var(--text-muted)">Nichts offen – gute Arbeit.</div>`));
+  open.forEach(p => openList.appendChild(renderPinRow(p)));
+  wrap.appendChild(openList);
+
+  const doneBox = el(`
+    <div>
+      <button id="toggle-pin-done" class="text-xs font-medium mb-2" style="color:var(--text-muted)">
+        ${state.showPinDone ? "▾" : "▸"} Erledigt · ${done.length}
+      </button>
+      <div id="pin-done-list" class="space-y-2"></div>
+    </div>`);
+  doneBox.querySelector("#toggle-pin-done").addEventListener("click", () => { state.showPinDone = !state.showPinDone; render(); });
+  if (state.showPinDone) {
+    const list = doneBox.querySelector("#pin-done-list");
+    if (!done.length) list.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch nichts erledigt.</div>`));
+    done.forEach(p => list.appendChild(renderPinRow(p)));
+  }
+  wrap.appendChild(doneBox);
+
+  return wrap;
+}
+
+function renderPinRow(p) {
+  const row = el(`
+    <div class="card p-3 flex items-center gap-3">
+      <input type="checkbox" ${p.done ? "checked" : ""} class="w-4 h-4 shrink-0">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm ${p.done ? "line-through" : ""}" style="${p.done ? 'color:var(--text-muted)' : ''}">${escapeHtml(p.text)}</div>
+        <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(p.createdBy || "")}</div>
+      </div>
+      <button class="text-xs shrink-0" style="color:var(--danger)">Löschen</button>
+    </div>`);
+  row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
+    await db.collection("pinboard").doc(p.id).update({ done: e.target.checked });
+  });
+  row.querySelector("button").addEventListener("click", async () => {
+    if (confirm("Eintrag löschen?")) await db.collection("pinboard").doc(p.id).delete();
+  });
+  return row;
+}
+
+/* =========================================================================
+   KALENDER
+   ========================================================================= */
+const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const MONTH_LABELS = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+
+function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function isoDate(y, m, d) { return `${y}-${pad2(m + 1)}-${pad2(d)}`; }
+function weekdayOf(y, m, d) { const w = new Date(y, m, d).getDay(); return w === 0 ? 6 : w - 1; }
+
+function getMonthMatrix(yyyyMm) {
+  const [y, m] = yyyyMm.split("-").map(Number);
+  const month = m - 1;
+  const daysInMonth = new Date(y, month + 1, 0).getDate();
+  const firstWeekday = weekdayOf(y, month, 1);
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ y, m: month, d, iso: isoDate(y, month, d), weekday: weekdayOf(y, month, d) });
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return { weeks, y, month };
+}
+
+function shiftMonth(yyyyMm, delta) {
+  const [y, m] = yyyyMm.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+
+function renderCalendarSection(isAdmin) {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Kalender</h1>
+      <div class="text-sm" style="color:var(--text-muted)">${isAdmin ? "Du kannst Einträge bearbeiten" : "Nur Admins können Einträge bearbeiten"}</div>
+    </div>`));
+
+  const recBox = el(`<div class="card p-4 mb-6"></div>`);
+  const recHeader = el(`
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-sm font-medium">Wiederkehrend</div>
+      ${isAdmin ? '<button id="add-recurring" class="btn btn-ghost px-2 py-1 text-xs">+ Eintrag</button>' : ''}
+    </div>`);
+  recBox.appendChild(recHeader);
+  const recForm = el(`<div id="rec-form" class="hidden mb-3 p-3 rounded-lg" style="background:var(--surface-2)"></div>`);
+  recBox.appendChild(recForm);
+  if (!calRecurring.length) recBox.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch keine wiederkehrenden Termine.</div>`));
+  calRecurring.slice().sort((a,b) => a.weekday - b.weekday).forEach(r => {
+    const row = el(`
+      <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
+        <div><span class="font-medium">${WEEKDAY_LABELS[r.weekday]}s</span> · ${escapeHtml(r.title)}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>
+        ${isAdmin ? `<button class="text-xs" style="color:var(--danger)">Löschen</button>` : ""}
+      </div>`);
+    if (isAdmin) row.querySelector("button").addEventListener("click", async () => {
+      if (confirm("Wiederkehrenden Termin löschen?")) await db.collection("calendarRecurring").doc(r.id).delete();
+    });
+    recBox.appendChild(row);
+  });
+  wrap.appendChild(recBox);
+
+  if (isAdmin) {
+    recHeader.querySelector("#add-recurring").addEventListener("click", () => {
+      recForm.classList.toggle("hidden");
+      if (recForm.classList.contains("hidden")) return;
+      recForm.innerHTML = "";
+      recForm.appendChild(el(`
+        <div class="grid sm:grid-cols-3 gap-2 mb-2">
+          <input id="rf-title" type="text" placeholder="Titel" class="px-2 py-1.5 text-sm sm:col-span-1">
+          <select id="rf-weekday" class="px-2 py-1.5 text-sm">
+            ${WEEKDAY_LABELS.map((w,i) => `<option value="${i}">${w}s</option>`).join("")}
+          </select>
+          <input id="rf-notes" type="text" placeholder="Notiz (optional)" class="px-2 py-1.5 text-sm">
+        </div>
+        <button id="rf-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>`));
+      recForm.querySelector("#rf-save").addEventListener("click", async () => {
+        const title = recForm.querySelector("#rf-title").value.trim();
+        if (!title) return;
+        await db.collection("calendarRecurring").add({
+          title, weekday: Number(recForm.querySelector("#rf-weekday").value),
+          notes: recForm.querySelector("#rf-notes").value.trim()
+        });
+        recForm.classList.add("hidden");
+      });
+    });
+  }
+
+  if (!state.calMonth) state.calMonth = new Date().toISOString().slice(0, 7);
+  const { weeks, y, month } = getMonthMatrix(state.calMonth);
+  const nav = el(`
+    <div class="flex items-center justify-between mb-3">
+      <button id="cal-prev" class="btn btn-ghost px-3 py-1.5 text-sm">←</button>
+      <div class="text-sm font-medium">${MONTH_LABELS[month]} ${y}</div>
+      <button id="cal-next" class="btn btn-ghost px-3 py-1.5 text-sm">→</button>
+    </div>`);
+  nav.querySelector("#cal-prev").addEventListener("click", () => { state.calMonth = shiftMonth(state.calMonth, -1); render(); });
+  nav.querySelector("#cal-next").addEventListener("click", () => { state.calMonth = shiftMonth(state.calMonth, 1); render(); });
+  wrap.appendChild(nav);
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const grid = el(`<div class="grid grid-cols-7 gap-1 text-center"></div>`);
+  WEEKDAY_LABELS.forEach(w => grid.appendChild(el(`<div class="text-xs pb-1" style="color:var(--text-muted)">${w}</div>`)));
+  weeks.forEach(week => {
+    week.forEach(cell => {
+      if (!cell) { grid.appendChild(el(`<div></div>`)); return; }
+      const dayEvents = calEvents.filter(e => e.date === cell.iso);
+      const hasRecurring = calRecurring.some(r => r.weekday === cell.weekday);
+      const isToday = cell.iso === todayIso;
+      const btn = el(`
+        <button class="aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 p-1" style="${isToday ? 'background:var(--accent); color:var(--accent-ink)' : 'background:var(--surface); border:1px solid var(--border); color:var(--text)'}">
+          <span>${cell.d}</span>
+          <span class="flex gap-0.5">
+            ${hasRecurring ? '<span class="w-1.5 h-1.5 rounded-full" style="background:currentColor; opacity:0.5"></span>' : ''}
+            ${dayEvents.length ? `<span class="w-1.5 h-1.5 rounded-full" style="background:currentColor"></span>` : ''}
+          </span>
+        </button>`);
+      btn.addEventListener("click", () => { state.calSelectedDate = cell.iso; render(); });
+      grid.appendChild(btn);
+    });
+  });
+  wrap.appendChild(grid);
+
+  return wrap;
+}
+
+function renderCalendarDayDetail(isAdmin) {
+  const iso = state.calSelectedDate;
+  const [y, m, d] = iso.split("-").map(Number);
+  const weekday = weekdayOf(y, m - 1, d);
+  const dayEvents = calEvents.filter(e => e.date === iso);
+  const dayRecurring = calRecurring.filter(r => r.weekday === weekday);
+
+  const overlay = el(`
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
+      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+        <div class="flex items-start justify-between mb-4">
+          <h2 class="text-lg font-semibold">${d}. ${MONTH_LABELS[m - 1]} ${y} <span class="text-sm font-normal" style="color:var(--text-muted)">(${WEEKDAY_LABELS[weekday]})</span></h2>
+          <button id="close-day" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
+        </div>
+
+        ${dayRecurring.length ? `
+          <div class="mb-4">
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Wiederkehrend an diesem Tag</div>
+            ${dayRecurring.map(r => `<div class="text-sm mb-1">${escapeHtml(r.title)}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>`).join("")}
+          </div>` : ""}
+
+        <div id="day-events" class="space-y-2 mb-4"></div>
+
+        ${isAdmin ? `
+          <button id="add-day-event" class="btn btn-ghost px-3 py-1.5 text-sm">+ Termin/Abwesenheit</button>
+          <div id="day-form" class="hidden mt-3 p-3 rounded-lg" style="background:var(--surface-2)"></div>
+        ` : ""}
+      </div>
+    </div>`);
+
+  overlay.querySelector("#close-day").addEventListener("click", () => { state.calSelectedDate = null; render(); });
+
+  const eventsBox = overlay.querySelector("#day-events");
+  if (!dayEvents.length) eventsBox.appendChild(el(`<div class="text-sm" style="color:var(--text-muted)">Keine Termine an diesem Tag.</div>`));
+  dayEvents.forEach(e => {
+    const isAbsence = e.type === "absence";
+    const row = el(`
+      <div class="card p-3">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <span class="text-xs px-2 py-0.5 rounded-full" style="background:${isAbsence ? 'var(--danger-soft)' : 'var(--tbg-soft)'}; color:${isAbsence ? 'var(--danger)' : 'var(--tbg)'}">${isAbsence ? "Abwesenheit" : "Veranstaltung"}</span>
+            <div class="text-sm font-medium mt-1">${escapeHtml(e.title)}${e.person ? ` – ${escapeHtml(e.person)}` : ""}</div>
+            ${e.notes ? `<div class="text-xs mt-0.5" style="color:var(--text-muted)">${escapeHtml(e.notes)}</div>` : ""}
+          </div>
+          ${isAdmin ? `<button class="text-xs shrink-0" style="color:var(--danger)">Löschen</button>` : ""}
+        </div>
+      </div>`);
+    if (isAdmin) row.querySelector("button").addEventListener("click", async () => {
+      if (confirm("Eintrag löschen?")) await db.collection("calendarEvents").doc(e.id).delete();
+    });
+    eventsBox.appendChild(row);
+  });
+
+  if (isAdmin) {
+    const addBtn = overlay.querySelector("#add-day-event");
+    const form = overlay.querySelector("#day-form");
+    addBtn.addEventListener("click", () => {
+      form.classList.toggle("hidden");
+      if (form.classList.contains("hidden")) return;
+      form.innerHTML = `
+        <div class="mb-2">
+          <select id="df-type" class="w-full px-2 py-1.5 text-sm mb-2">
+            <option value="event">Veranstaltung</option>
+            <option value="absence">Abwesenheit</option>
+          </select>
+          <input id="df-title" type="text" placeholder="Titel" class="w-full px-2 py-1.5 text-sm mb-2">
+          <input id="df-person" type="text" placeholder="Person (nur bei Abwesenheit)" class="w-full px-2 py-1.5 text-sm mb-2">
+          <input id="df-notes" type="text" placeholder="Notiz (optional)" class="w-full px-2 py-1.5 text-sm mb-2">
+          <button id="df-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>
+        </div>`;
+      form.querySelector("#df-save").addEventListener("click", async () => {
+        const title = form.querySelector("#df-title").value.trim();
+        if (!title) return;
+        await db.collection("calendarEvents").add({
+          title, date: iso, type: form.querySelector("#df-type").value,
+          person: form.querySelector("#df-person").value.trim(),
+          notes: form.querySelector("#df-notes").value.trim(),
+          createdBy: getAuthorName(), createdAt: Date.now()
+        });
+        form.classList.add("hidden");
+      });
+    });
+  }
+
+  return overlay;
+}
+
+/* =========================================================================
+   INFOS
+   ========================================================================= */
+let infoDraft = null;
+
+function renderInfoSection(isAdmin) {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in max-w-2xl"></div>`);
+  const header = el(`
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-semibold">Infos</h1>
+      ${isAdmin ? `<button id="info-edit-toggle" class="btn btn-ghost px-3 py-1.5 text-sm">${state.infoEditing ? "Fertig" : "Bearbeiten"}</button>` : ""}
+    </div>`);
+  wrap.appendChild(header);
+  if (isAdmin) {
+    header.querySelector("#info-edit-toggle").addEventListener("click", async () => {
+      if (state.infoEditing) {
+        if (infoDraft) await db.collection("info").doc("main").set({ sections: infoDraft });
+        infoDraft = null;
+        state.infoEditing = false;
+      } else {
+        state.infoEditing = true;
+      }
+      render();
+    });
+  }
+
+  if (isAdmin && state.infoEditing) {
+    if (!infoDraft) infoDraft = infoSections.map(s => ({ ...s }));
+    const editBox = el(`<div class="space-y-4"></div>`);
+    infoDraft.forEach((s, idx) => {
+      const secEl = el(`
+        <div class="card p-4">
+          <div class="flex items-center justify-between mb-2 gap-2">
+            <input type="text" class="flex-1 px-2 py-1.5 text-sm font-medium sec-title" value="${escapeHtml(s.title)}" placeholder="Abschnittstitel">
+            <button class="text-xs shrink-0 sec-del" style="color:var(--danger)">Entfernen</button>
+          </div>
+          <textarea rows="4" class="w-full px-2 py-1.5 text-sm sec-content" placeholder="Inhalt…">${escapeHtml(s.content)}</textarea>
+        </div>`);
+      secEl.querySelector(".sec-title").addEventListener("input", (e) => { infoDraft[idx].title = e.target.value; });
+      secEl.querySelector(".sec-content").addEventListener("input", (e) => { infoDraft[idx].content = e.target.value; });
+      secEl.querySelector(".sec-del").addEventListener("click", () => { infoDraft.splice(idx, 1); render(); });
+      editBox.appendChild(secEl);
+    });
+    wrap.appendChild(editBox);
+
+    const controls = el(`
+      <div class="flex gap-2 mt-4">
+        <button id="info-add-section" class="btn btn-ghost px-3 py-2 text-sm">+ Abschnitt</button>
+        <button id="info-save" class="btn btn-accent px-3 py-2 text-sm">Speichern</button>
+        <button id="info-cancel" class="btn btn-ghost px-3 py-2 text-sm">Abbrechen</button>
+      </div>`);
+    wrap.appendChild(controls);
+    controls.querySelector("#info-add-section").addEventListener("click", () => {
+      infoDraft.push({ id: "s" + Date.now(), title: "Neuer Abschnitt", content: "" });
+      render();
+    });
+    controls.querySelector("#info-save").addEventListener("click", async () => {
+      await db.collection("info").doc("main").set({ sections: infoDraft });
+      infoDraft = null;
+      state.infoEditing = false;
+      render();
+    });
+    controls.querySelector("#info-cancel").addEventListener("click", () => {
+      infoDraft = null;
+      state.infoEditing = false;
+      render();
+    });
+  } else {
+    if (!infoSections.length) {
+      wrap.appendChild(el(`<div class="card p-10 text-center text-sm" style="color:var(--text-muted)">Noch keine Infos hinterlegt.${isAdmin ? ' Klick auf "Bearbeiten", um loszulegen.' : ''}</div>`));
+    } else {
+      infoSections.forEach(s => {
+        wrap.appendChild(el(`
+          <div class="card p-4 mb-3">
+            <div class="text-sm font-medium mb-1">${escapeHtml(s.title)}</div>
+            <div class="text-sm whitespace-pre-wrap" style="color:var(--text)">${escapeHtml(s.content)}</div>
+          </div>`));
+      });
+    }
+  }
+
+  return wrap;
 }
 
 /* =========================================================================
