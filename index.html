@@ -149,7 +149,9 @@ let adminUsers = [];
 let repairs = [];
 let roomsUnsub = null;
 let repairsUnsub = null;
-let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false };
+let orders = [];
+let ordersUnsub = null;
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false };
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -157,6 +159,13 @@ const REPAIR_STATUSES = [
   { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
 ];
 function statusMeta(key) { return REPAIR_STATUSES.find(s => s.key === key) || REPAIR_STATUSES[0]; }
+
+const ORDER_STATUSES = [
+  { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
+  { key: "bestellt", label: "Bestellt", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
+];
+function orderStatusMeta(key) { return ORDER_STATUSES.find(s => s.key === key) || ORDER_STATUSES[0]; }
 
 /* =========================================================================
    HELPERS
@@ -259,6 +268,14 @@ function subscribeRepairs(cb) {
     repairs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     cb();
   }, err => console.error("repairs sub error", err));
+}
+
+function subscribeOrders(cb) {
+  if (ordersUnsub) ordersUnsub();
+  ordersUnsub = db.collection("orders").orderBy("createdAt", "desc").onSnapshot(snap => {
+    orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("orders sub error", err));
 }
 
 async function uploadRepairImage(file) {
@@ -452,6 +469,7 @@ async function goToApp() {
   state.category = "TBG";
   subscribeRooms(render);
   subscribeRepairs(render);
+  subscribeOrders(render);
   render();
 }
 
@@ -460,6 +478,7 @@ function logout() {
   currentUser = null;
   if (roomsUnsub) { roomsUnsub(); roomsUnsub = null; }
   if (repairsUnsub) { repairsUnsub(); repairsUnsub = null; }
+  if (ordersUnsub) { ordersUnsub(); ordersUnsub = null; }
   state.screen = "login";
   render();
 }
@@ -470,7 +489,7 @@ function logout() {
 const NAV_ITEMS = [
   { key: "rooms", label: "Räume", ready: true },
   { key: "reparaturen", label: "Reparaturen", ready: true },
-  { key: "bestellungen", label: "Bestellungen", ready: false },
+  { key: "bestellungen", label: "Bestellungen", ready: true },
   { key: "pinnwand", label: "Pinnwand", ready: false },
   { key: "kalender", label: "Kalender", ready: false },
   { key: "infos", label: "Infos", ready: false }
@@ -514,6 +533,8 @@ function renderAppShell() {
       state.openRoomId = null;
       state.openRepairId = null;
       if (item.key !== "reparaturen") state.repairRoomId = null;
+      state.openOrderId = null;
+      if (item.key !== "bestellungen") state.orderRoomId = null;
       render();
     });
     nav.appendChild(btn);
@@ -531,6 +552,7 @@ function renderAppShell() {
   const section = state.currentSection || "rooms";
   if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
   else if (section === "reparaturen") main.appendChild(renderRepairsSection());
+  else if (section === "bestellungen") main.appendChild(renderOrdersSection());
   else if (section === "settings") main.appendChild(renderSettingsSection());
   else main.appendChild(renderComingSoon(NAV_ITEMS.find(n => n.key === section).label));
 
@@ -545,6 +567,9 @@ function renderAppShell() {
   }
   if (state.openRepairId) {
     wrap.appendChild(renderRepairDetail());
+  }
+  if (state.openOrderId) {
+    wrap.appendChild(renderOrderDetail());
   }
   return wrap;
 }
@@ -965,6 +990,243 @@ function renderRepairDetail() {
     if (confirm("Diese Meldung wirklich löschen?")) {
       await db.collection("repairs").doc(t.id).delete();
       state.openRepairId = null;
+      render();
+    }
+  });
+
+  return overlay;
+}
+
+/* =========================================================================
+   BESTELLUNGEN
+   ========================================================================= */
+function renderOrdersSection() {
+  if (!state.orderRoomId) return renderOrderRoomPicker();
+  return renderOrderBoard();
+}
+
+function renderOrderRoomPicker() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Bestellungen</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Standort wählen</div>
+    </div>`));
+  if (!rooms.length) {
+    wrap.appendChild(el(`<div class="card p-10 text-center text-sm" style="color:var(--text-muted)">Erst müssen Räume angelegt werden (unter "Räume").</div>`));
+    return wrap;
+  }
+  const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
+  rooms.forEach(r => {
+    const openCount = orders.filter(o => o.roomId === r.id && o.status !== "erledigt").length;
+    const card = el(`
+      <button class="card p-4 text-left hover:opacity-90">
+        <div class="flex items-start justify-between mb-2">
+          <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+          <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+        </div>
+        <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Bestellungen" : openCount + " offen"}</div>
+      </button>`);
+    card.addEventListener("click", () => { state.orderRoomId = r.id; render(); });
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function renderOrderBoard() {
+  const room = rooms.find(r => r.id === state.orderRoomId);
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  if (!room) { state.orderRoomId = null; wrap.appendChild(el(`<div></div>`)); return wrap; }
+
+  const header = el(`
+    <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+      <div>
+        <button id="back-to-picker" class="text-xs mb-1" style="color:var(--text-muted)">← Alle Standorte</button>
+        <h1 class="text-xl font-semibold">Bestellungen · ${escapeHtml(room.name)}</h1>
+      </div>
+      <button id="new-order-btn" class="btn btn-accent px-3 py-2 text-sm">+ Bestellung</button>
+    </div>`);
+  wrap.appendChild(header);
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.orderRoomId = null; render(); });
+  header.querySelector("#new-order-btn").addEventListener("click", () => openOrderForm(room.id));
+
+  const roomOrders = orders.filter(o => o.roomId === room.id);
+  const cols = el(`<div class="grid md:grid-cols-2 gap-4 mb-6"></div>`);
+  ["offen", "bestellt"].forEach(statusKey => {
+    const meta = orderStatusMeta(statusKey);
+    const items = roomOrders.filter(o => o.status === statusKey);
+    const col = el(`
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="w-2 h-2 rounded-full" style="background:${meta.color}"></span>
+          <span class="text-sm font-medium">${meta.label}</span>
+          <span class="text-xs" style="color:var(--text-muted)">${items.length}</span>
+        </div>
+        <div class="space-y-2" id="ocol-${statusKey}"></div>
+      </div>`);
+    const list = col.querySelector(`#ocol-${statusKey}`);
+    if (!items.length) list.appendChild(el(`<div class="text-xs p-3 card" style="color:var(--text-muted)">Keine Einträge</div>`));
+    items.forEach(o => list.appendChild(renderOrderCard(o)));
+    cols.appendChild(col);
+  });
+  wrap.appendChild(cols);
+
+  const archived = roomOrders.filter(o => o.status === "erledigt");
+  const archiveBox = el(`
+    <div>
+      <button id="toggle-order-archive" class="text-xs font-medium mb-2" style="color:var(--text-muted)">
+        ${state.showOrderArchive ? "▾" : "▸"} Archiv (erledigt) · ${archived.length}
+      </button>
+      <div id="order-archive-list" class="space-y-2"></div>
+    </div>`);
+  archiveBox.querySelector("#toggle-order-archive").addEventListener("click", () => { state.showOrderArchive = !state.showOrderArchive; render(); });
+  if (state.showOrderArchive) {
+    const list = archiveBox.querySelector("#order-archive-list");
+    if (!archived.length) list.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch nichts archiviert.</div>`));
+    archived.forEach(o => list.appendChild(renderOrderCard(o)));
+  }
+  wrap.appendChild(archiveBox);
+
+  return wrap;
+}
+
+function renderOrderCard(o) {
+  const meta = orderStatusMeta(o.status);
+  const card = el(`
+    <button class="card p-3 text-left w-full hover:opacity-90">
+      <div class="flex items-start justify-between gap-2 mb-1">
+        <div class="text-sm font-medium">${escapeHtml(o.title)}${o.quantity ? ` <span style="color:var(--text-muted); font-weight:400">× ${escapeHtml(o.quantity)}</span>` : ""}</div>
+        <span class="text-xs px-2 py-0.5 rounded-full shrink-0" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
+      </div>
+      <div class="text-xs flex items-center gap-3" style="color:var(--text-muted)">
+        ${o.assignedTo ? `<span>👤 ${escapeHtml(o.assignedTo)}</span>` : ""}
+        ${(o.comments && o.comments.length) ? `<span>💬 ${o.comments.length}</span>` : ""}
+      </div>
+    </button>`);
+  card.addEventListener("click", () => { state.openOrderId = o.id; render(); });
+  return card;
+}
+
+function openOrderForm(roomId) {
+  const title = prompt("Was soll bestellt werden?");
+  if (!title || !title.trim()) return;
+  const quantity = prompt("Menge (optional):") || "";
+  db.collection("orders").add({
+    roomId, title: title.trim(), quantity: quantity.trim(), notes: "",
+    status: "offen", assignedTo: "", comments: [],
+    createdBy: getAuthorName(), createdAt: Date.now(), updatedAt: Date.now()
+  }).then(ref => { state.openOrderId = ref.id; render(); });
+}
+
+function renderOrderDetail() {
+  const o = orders.find(x => x.id === state.openOrderId);
+  if (!o) return el(`<div></div>`);
+  const room = rooms.find(r => r.id === o.roomId);
+  const meta = orderStatusMeta(o.status);
+  const overlay = el(`
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
+      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+        <div class="flex items-start justify-between mb-1">
+          <span class="text-xs px-2 py-0.5 rounded-full" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
+          <button id="close-order" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
+        </div>
+        <h2 class="text-lg font-semibold mb-1">${escapeHtml(o.title)}</h2>
+        <div class="text-xs mb-4" style="color:var(--text-muted)">${room ? escapeHtml(room.name) : ""} · angelegt von ${escapeHtml(o.createdBy || "?")} · ${formatDate(o.createdAt)}</div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Menge</div>
+          <div class="flex gap-2">
+            <input id="qty-input" type="text" class="flex-1 px-3 py-2 text-sm" value="${escapeHtml(o.quantity || "")}" placeholder="z.B. 2 Stück">
+            <button id="qty-save" class="btn btn-ghost px-3 py-2 text-sm">OK</button>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Notizen</div>
+          <div class="flex gap-2">
+            <input id="notes-input" type="text" class="flex-1 px-3 py-2 text-sm" value="${escapeHtml(o.notes || "")}" placeholder="z.B. Link, Marke, Grund">
+            <button id="notes-save" class="btn btn-ghost px-3 py-2 text-sm">OK</button>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Status</div>
+          <div id="order-status-buttons" class="flex gap-2"></div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Zugewiesen an</div>
+          <div class="flex gap-2">
+            <input id="order-assign-input" type="text" class="flex-1 px-3 py-2 text-sm" value="${escapeHtml(o.assignedTo || "")}" placeholder="Name eintragen">
+            <button id="order-assign-save" class="btn btn-ghost px-3 py-2 text-sm">OK</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-xs font-medium mb-2" style="color:var(--text-muted)">Kommentare</div>
+          <div id="order-comment-list" class="space-y-2 mb-3"></div>
+          <div class="flex gap-2">
+            <input id="order-comment-input" type="text" class="flex-1 px-3 py-2 text-sm" placeholder="Kommentar schreiben…">
+            <button id="order-comment-send" class="btn btn-accent px-3 py-2 text-sm">Senden</button>
+          </div>
+        </div>
+
+        <button id="delete-order" class="text-xs mt-6" style="color:var(--danger)">Bestellung löschen</button>
+      </div>
+    </div>`);
+
+  overlay.querySelector("#close-order").addEventListener("click", () => { state.openOrderId = null; render(); });
+
+  overlay.querySelector("#qty-save").addEventListener("click", async () => {
+    const val = overlay.querySelector("#qty-input").value.trim();
+    await db.collection("orders").doc(o.id).update({ quantity: val, updatedAt: Date.now() });
+  });
+  overlay.querySelector("#notes-save").addEventListener("click", async () => {
+    const val = overlay.querySelector("#notes-input").value.trim();
+    await db.collection("orders").doc(o.id).update({ notes: val, updatedAt: Date.now() });
+  });
+
+  const statusBox = overlay.querySelector("#order-status-buttons");
+  ORDER_STATUSES.forEach(s => {
+    const active = o.status === s.key;
+    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
+    b.addEventListener("click", async () => {
+      await db.collection("orders").doc(o.id).update({ status: s.key, updatedAt: Date.now() });
+    });
+    statusBox.appendChild(b);
+  });
+
+  overlay.querySelector("#order-assign-save").addEventListener("click", async () => {
+    const val = overlay.querySelector("#order-assign-input").value.trim();
+    await db.collection("orders").doc(o.id).update({ assignedTo: val, updatedAt: Date.now() });
+  });
+
+  const commentList = overlay.querySelector("#order-comment-list");
+  (o.comments || []).forEach(c => {
+    commentList.appendChild(el(`
+      <div class="text-sm p-2 rounded-lg" style="background:var(--surface-2)">
+        <div class="text-xs font-medium mb-0.5">${escapeHtml(c.author)} <span style="color:var(--text-muted); font-weight:400">· ${formatDate(c.createdAt)}</span></div>
+        <div>${escapeHtml(c.text)}</div>
+      </div>`));
+  });
+  const sendOrderComment = async () => {
+    const input = overlay.querySelector("#order-comment-input");
+    const text = input.value.trim();
+    if (!text) return;
+    await db.collection("orders").doc(o.id).update({
+      comments: firebase.firestore.FieldValue.arrayUnion({ author: getAuthorName(), text, createdAt: Date.now() }),
+      updatedAt: Date.now()
+    });
+    input.value = "";
+  };
+  overlay.querySelector("#order-comment-send").addEventListener("click", sendOrderComment);
+  overlay.querySelector("#order-comment-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendOrderComment(); });
+
+  overlay.querySelector("#delete-order").addEventListener("click", async () => {
+    if (confirm("Diese Bestellung wirklich löschen?")) {
+      await db.collection("orders").doc(o.id).delete();
+      state.openOrderId = null;
       render();
     }
   });
