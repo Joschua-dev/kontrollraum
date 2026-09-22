@@ -311,6 +311,7 @@ function subscribeCalendar(cb) {
   if (calRecurringUnsub) calRecurringUnsub();
   calRecurringUnsub = db.collection("calendarRecurring").onSnapshot(snap => {
     calRecurring = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    ensureRecurringPinboardTasks();
     cb();
   }, err => console.error("recurring sub error", err));
 }
@@ -1439,7 +1440,7 @@ function renderPinRow(p) {
     <div class="card p-3 flex items-center gap-3">
       <input type="checkbox" ${p.done ? "checked" : ""} class="w-4 h-4 shrink-0">
       <div class="flex-1 min-w-0">
-        <div class="text-sm ${p.done ? "line-through" : ""}" style="${p.done ? 'color:var(--text-muted)' : ''}">${escapeHtml(p.text)}</div>
+        <div class="text-sm ${p.done ? "line-through" : ""}" style="${p.done ? 'color:var(--text-muted)' : ''}">${p.recurringId ? '↻ ' : ''}${escapeHtml(p.text)}</div>
         <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(p.createdBy || "")}</div>
       </div>
       <button class="prio-badge text-xs px-2 py-0.5 rounded-full shrink-0" style="background:${meta.soft}; color:${meta.color}" title="Priorität ändern">${meta.label}</button>
@@ -1516,6 +1517,28 @@ function shiftWeek(mondayIso, deltaWeeks) {
   dt.setDate(dt.getDate() + deltaWeeks * 7);
   return isoOf(dt);
 }
+function weekKeyOf(dateObj) {
+  return isoOf(mondayOf(dateObj));
+}
+async function ensureRecurringPinboardTasks() {
+  const weekKey = weekKeyOf(new Date());
+  for (const r of calRecurring) {
+    if (!r.toPinboard) continue;
+    try {
+      const snap = await db.collection("pinboard")
+        .where("recurringId", "==", r.id)
+        .where("weekKey", "==", weekKey)
+        .limit(1).get();
+      if (snap.empty) {
+        await db.collection("pinboard").add({
+          text: r.title, priority: "mittel", done: false,
+          createdBy: "Wiederkehrend (Kalender)", createdAt: Date.now(),
+          recurringId: r.id, weekKey
+        });
+      }
+    } catch (e) { console.error("recurring pinboard sync error", e); }
+  }
+}
 
 function renderWeekView() {
   if (!state.calWeekStart) state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10);
@@ -1555,7 +1578,16 @@ function renderWeekView() {
         <div class="flex-1 space-y-1"></div>
       </button>`);
     const body = card.querySelector(".flex-1");
-    dayRecurring.forEach(r => body.appendChild(el(`<div class="text-xs px-1.5 py-0.5 rounded" style="background:var(--surface-2); color:var(--text-muted)">↻ ${escapeHtml(r.title)}</div>`)));
+    const weekKey = state.calWeekStart;
+    dayRecurring.forEach(r => {
+      let style = "background:var(--surface-2); color:var(--text-muted)";
+      let prefix = "↻ ";
+      if (r.toPinboard) {
+        const linkedTask = pinItems.find(p => p.recurringId === r.id && p.weekKey === weekKey);
+        if (linkedTask && linkedTask.done) { style = "background:var(--tbg-soft); color:var(--tbg)"; prefix = "✓ "; }
+      }
+      body.appendChild(el(`<div class="text-xs px-1.5 py-0.5 rounded" style="${style}">${prefix}${escapeHtml(r.title)}</div>`));
+    });
     dayEvents.forEach(e => {
       const isAbsence = e.type === "absence";
       body.appendChild(el(`<div class="text-xs px-1.5 py-0.5 rounded truncate" style="background:${isAbsence ? 'var(--danger-soft)' : 'var(--tbg-soft)'}; color:${isAbsence ? 'var(--danger)' : 'var(--tbg)'}">${escapeHtml(e.title)}${e.person ? ' · ' + escapeHtml(e.person) : ''}</div>`));
@@ -1589,7 +1621,7 @@ function renderCalendarSection(isAdmin) {
   calRecurring.slice().sort((a,b) => a.weekday - b.weekday).forEach(r => {
     const row = el(`
       <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
-        <div><span class="font-medium">${WEEKDAY_LABELS[r.weekday]}s</span> · ${escapeHtml(r.title)}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>
+        <div><span class="font-medium">${WEEKDAY_LABELS[r.weekday]}s</span> · ${escapeHtml(r.title)}${r.toPinboard ? ' 📌' : ''}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>
         ${isAdmin ? `<button class="text-xs" style="color:var(--danger)">Löschen</button>` : ""}
       </div>`);
     if (isAdmin) row.querySelector("button").addEventListener("click", async () => {
@@ -1612,13 +1644,18 @@ function renderCalendarSection(isAdmin) {
           </select>
           <input id="rf-notes" type="text" placeholder="Notiz (optional)" class="px-2 py-1.5 text-sm">
         </div>
+        <label class="flex items-center gap-2 text-xs mb-2" style="color:var(--text-muted)">
+          <input id="rf-pin" type="checkbox" class="w-4 h-4">
+          Jede Woche automatisch auf die Pinnwand stellen
+        </label>
         <button id="rf-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>`));
       recForm.querySelector("#rf-save").addEventListener("click", async () => {
         const title = recForm.querySelector("#rf-title").value.trim();
         if (!title) return;
         await db.collection("calendarRecurring").add({
           title, weekday: Number(recForm.querySelector("#rf-weekday").value),
-          notes: recForm.querySelector("#rf-notes").value.trim()
+          notes: recForm.querySelector("#rf-notes").value.trim(),
+          toPinboard: recForm.querySelector("#rf-pin").checked
         });
         recForm.classList.add("hidden");
       });
@@ -1658,13 +1695,16 @@ function renderCalendarSection(isAdmin) {
     week.forEach(cell => {
       if (!cell) { grid.appendChild(el(`<div></div>`)); return; }
       const dayEvents = calEvents.filter(e => e.date === cell.iso);
-      const hasRecurring = calRecurring.some(r => r.weekday === cell.weekday);
+      const dayRecurringItems = calRecurring.filter(r => r.weekday === cell.weekday);
+      const hasRecurring = dayRecurringItems.length > 0;
+      const cellWeekKey = weekKeyOf(new Date(cell.y, cell.m, cell.d));
+      const recurringDone = dayRecurringItems.some(r => r.toPinboard && pinItems.some(p => p.recurringId === r.id && p.weekKey === cellWeekKey && p.done));
       const isToday = cell.iso === todayIso;
       const btn = el(`
         <button class="aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 p-1" style="${isToday ? 'background:var(--accent); color:var(--accent-ink)' : 'background:var(--surface); border:1px solid var(--border); color:var(--text)'}">
           <span>${cell.d}</span>
           <span class="flex gap-0.5">
-            ${hasRecurring ? '<span class="w-1.5 h-1.5 rounded-full" style="background:currentColor; opacity:0.5"></span>' : ''}
+            ${hasRecurring ? `<span class="w-1.5 h-1.5 rounded-full" style="${recurringDone ? 'background:var(--tbg); opacity:1' : 'background:currentColor; opacity:0.5'}"></span>` : ''}
             ${dayEvents.length ? `<span class="w-1.5 h-1.5 rounded-full" style="background:currentColor"></span>` : ''}
           </span>
         </button>`);
@@ -1683,6 +1723,7 @@ function renderCalendarDayDetail(isAdmin) {
   const weekday = weekdayOf(y, m - 1, d);
   const dayEvents = calEvents.filter(e => e.date === iso);
   const dayRecurring = calRecurring.filter(r => r.weekday === weekday);
+  const dayWeekKey = weekKeyOf(new Date(y, m - 1, d));
 
   const overlay = el(`
     <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
@@ -1695,7 +1736,11 @@ function renderCalendarDayDetail(isAdmin) {
         ${dayRecurring.length ? `
           <div class="mb-4">
             <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Wiederkehrend an diesem Tag</div>
-            ${dayRecurring.map(r => `<div class="text-sm mb-1">${escapeHtml(r.title)}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>`).join("")}
+            ${dayRecurring.map(r => {
+              const linkedTask = r.toPinboard ? pinItems.find(p => p.recurringId === r.id && p.weekKey === dayWeekKey) : null;
+              const doneMark = linkedTask && linkedTask.done ? `<span style="color:var(--tbg)">✓ erledigt</span>` : (r.toPinboard ? `<span style="color:var(--text-muted)">offen</span>` : "");
+              return `<div class="text-sm mb-1 flex items-center justify-between gap-2"><span>${escapeHtml(r.title)}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</span>${doneMark ? `<span class="text-xs shrink-0">${doneMark}</span>` : ""}</div>`;
+            }).join("")}
           </div>` : ""}
 
         <div id="day-events" class="space-y-2 mb-4"></div>
