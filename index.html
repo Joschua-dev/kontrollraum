@@ -531,6 +531,7 @@ async function goToLocationPicker() {
 function renderLocationPicker() {
   let lastId = null;
   try { lastId = localStorage.getItem("kr_last_standort_" + currentUser.role); } catch (e) {}
+  const canCancel = !!state.currentStandortId;
   const wrap = el(`
     <div class="min-h-screen flex items-center justify-center p-6">
       <div class="w-full max-w-sm fade-in">
@@ -538,9 +539,13 @@ function renderLocationPicker() {
           <div class="text-xl font-semibold display">Wo bist du gerade?</div>
           <div class="text-sm mt-1" style="color:var(--text-muted)">${escapeHtml(currentUser.name)} · ${escapeHtml(ROLES[currentUser.role].label)}</div>
         </div>
-        <div id="loc-list" class="space-y-4 max-h-[70vh] overflow-y-auto scrollbar-thin"></div>
+        <div id="loc-list" class="space-y-4 max-h-[70vh] overflow-y-auto scrollbar-thin mb-4"></div>
+        <button id="loc-exit" class="btn btn-ghost w-full py-2 text-sm">${canCancel ? "Abbrechen" : "Abmelden"}</button>
       </div>
     </div>`);
+  wrap.querySelector("#loc-exit").addEventListener("click", () => {
+    if (canCancel) { goToApp(); } else { logout(); }
+  });
   const list = wrap.querySelector("#loc-list");
   if (!rooms.length) {
     list.appendChild(el(`<div class="card p-6 text-center text-sm" style="color:var(--text-muted)">Noch keine Standorte angelegt. Ein Admin muss zuerst welche hinzufügen.</div>`));
