@@ -159,7 +159,7 @@ let calRecurring = [];
 let calRecurringUnsub = null;
 let infoSections = [];
 let infoUnsub = null;
-let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, showPinDone: false, calMonth: null, calSelectedDate: null, infoEditing: false };
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false };
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -167,6 +167,14 @@ const REPAIR_STATUSES = [
   { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
 ];
 function statusMeta(key) { return REPAIR_STATUSES.find(s => s.key === key) || REPAIR_STATUSES[0]; }
+
+const PIN_PRIORITIES = [
+  { key: "hoch", label: "Hoch", color: "var(--danger)", soft: "var(--danger-soft)" },
+  { key: "mittel", label: "Mittel", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "niedrig", label: "Niedrig", color: "var(--text-muted)", soft: "var(--surface-2)" }
+];
+function pinPriorityMeta(key) { return PIN_PRIORITIES.find(p => p.key === key) || PIN_PRIORITIES[1]; }
+function pinPriorityRank(key) { return PIN_PRIORITIES.findIndex(p => p.key === key) === -1 ? 1 : PIN_PRIORITIES.findIndex(p => p.key === key); }
 
 const ORDER_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -505,6 +513,7 @@ async function goToApp() {
   state.screen = "app";
   state.category = "TBG";
   state.calMonth = new Date().toISOString().slice(0, 7);
+  state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10);
   subscribeRooms(render);
   subscribeRepairs(render);
   subscribeOrders(render);
@@ -1299,8 +1308,11 @@ function renderPinboardSection() {
     </div>`));
 
   const addRow = el(`
-    <div class="flex gap-2 mb-5">
-      <input id="pin-input" type="text" class="flex-1 px-3 py-2 text-sm" placeholder="Neue Aufgabe…">
+    <div class="flex gap-2 mb-5 flex-wrap">
+      <input id="pin-input" type="text" class="flex-1 min-w-[140px] px-3 py-2 text-sm" placeholder="Neue Aufgabe…">
+      <select id="pin-priority" class="px-2 py-2 text-sm">
+        ${PIN_PRIORITIES.map(p => `<option value="${p.key}" ${p.key === "mittel" ? "selected" : ""}>${p.label}</option>`).join("")}
+      </select>
       <button id="pin-add" class="btn btn-accent px-3 py-2 text-sm">+ Hinzufügen</button>
     </div>`);
   wrap.appendChild(addRow);
@@ -1308,13 +1320,14 @@ function renderPinboardSection() {
     const input = addRow.querySelector("#pin-input");
     const text = input.value.trim();
     if (!text) return;
-    await db.collection("pinboard").add({ text, done: false, createdBy: getAuthorName(), createdAt: Date.now() });
+    const priority = addRow.querySelector("#pin-priority").value;
+    await db.collection("pinboard").add({ text, priority, done: false, createdBy: getAuthorName(), createdAt: Date.now() });
     input.value = "";
   };
   addRow.querySelector("#pin-add").addEventListener("click", addPin);
   addRow.querySelector("#pin-input").addEventListener("keydown", (e) => { if (e.key === "Enter") addPin(); });
 
-  const open = pinItems.filter(p => !p.done);
+  const open = pinItems.filter(p => !p.done).slice().sort((a, b) => pinPriorityRank(a.priority) - pinPriorityRank(b.priority) || b.createdAt - a.createdAt);
   const done = pinItems.filter(p => p.done);
 
   const openList = el(`<div class="space-y-2 mb-6"></div>`);
@@ -1341,6 +1354,7 @@ function renderPinboardSection() {
 }
 
 function renderPinRow(p) {
+  const meta = pinPriorityMeta(p.priority);
   const row = el(`
     <div class="card p-3 flex items-center gap-3">
       <input type="checkbox" ${p.done ? "checked" : ""} class="w-4 h-4 shrink-0">
@@ -1348,12 +1362,17 @@ function renderPinRow(p) {
         <div class="text-sm ${p.done ? "line-through" : ""}" style="${p.done ? 'color:var(--text-muted)' : ''}">${escapeHtml(p.text)}</div>
         <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(p.createdBy || "")}</div>
       </div>
-      <button class="text-xs shrink-0" style="color:var(--danger)">Löschen</button>
+      <button class="prio-badge text-xs px-2 py-0.5 rounded-full shrink-0" style="background:${meta.soft}; color:${meta.color}" title="Priorität ändern">${meta.label}</button>
+      <button class="del-btn text-xs shrink-0" style="color:var(--danger)">Löschen</button>
     </div>`);
   row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
     await db.collection("pinboard").doc(p.id).update({ done: e.target.checked });
   });
-  row.querySelector("button").addEventListener("click", async () => {
+  row.querySelector(".prio-badge").addEventListener("click", async () => {
+    const nextIdx = (pinPriorityRank(p.priority) + 1) % PIN_PRIORITIES.length;
+    await db.collection("pinboard").doc(p.id).update({ priority: PIN_PRIORITIES[nextIdx].key });
+  });
+  row.querySelector(".del-btn").addEventListener("click", async () => {
     if (confirm("Eintrag löschen?")) await db.collection("pinboard").doc(p.id).delete();
   });
   return row;
@@ -1387,6 +1406,86 @@ function shiftMonth(yyyyMm, delta) {
   const [y, m] = yyyyMm.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+
+function mondayOf(dateObj) {
+  const d = new Date(dateObj);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function isoOf(dateObj) {
+  return `${dateObj.getFullYear()}-${pad2(dateObj.getMonth() + 1)}-${pad2(dateObj.getDate())}`;
+}
+function getWeekDates(mondayIso) {
+  const [y, m, d] = mondayIso.split("-").map(Number);
+  const start = new Date(y, m - 1, d);
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const dt = new Date(start);
+    dt.setDate(start.getDate() + i);
+    out.push({ iso: isoOf(dt), day: dt.getDate(), month: dt.getMonth(), year: dt.getFullYear(), weekday: i });
+  }
+  return out;
+}
+function shiftWeek(mondayIso, deltaWeeks) {
+  const [y, m, d] = mondayIso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + deltaWeeks * 7);
+  return isoOf(dt);
+}
+
+function renderWeekView() {
+  if (!state.calWeekStart) state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10);
+  const days = getWeekDates(state.calWeekStart);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const firstDay = days[0], lastDay = days[6];
+  const rangeLabel = firstDay.month === lastDay.month
+    ? `${firstDay.day}.–${lastDay.day}. ${MONTH_LABELS[firstDay.month]} ${firstDay.year}`
+    : `${firstDay.day}. ${MONTH_LABELS[firstDay.month]} – ${lastDay.day}. ${MONTH_LABELS[lastDay.month]} ${lastDay.year}`;
+
+  const wrap = el(`<div></div>`);
+  const nav = el(`
+    <div class="flex items-center justify-between mb-4">
+      <button id="week-prev" class="btn btn-ghost px-3 py-1.5 text-sm">←</button>
+      <div class="text-center">
+        <div class="text-sm font-medium">${rangeLabel}</div>
+        <button id="week-today" class="text-xs" style="color:var(--text-muted)">Diese Woche</button>
+      </div>
+      <button id="week-next" class="btn btn-ghost px-3 py-1.5 text-sm">→</button>
+    </div>`);
+  nav.querySelector("#week-prev").addEventListener("click", () => { state.calWeekStart = shiftWeek(state.calWeekStart, -1); render(); });
+  nav.querySelector("#week-next").addEventListener("click", () => { state.calWeekStart = shiftWeek(state.calWeekStart, 1); render(); });
+  nav.querySelector("#week-today").addEventListener("click", () => { state.calWeekStart = mondayOf(new Date()).toISOString().slice(0, 10); render(); });
+  wrap.appendChild(nav);
+
+  const grid = el(`<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2"></div>`);
+  days.forEach(day => {
+    const isToday = day.iso === todayIso;
+    const dayEvents = calEvents.filter(e => e.date === day.iso);
+    const dayRecurring = calRecurring.filter(r => r.weekday === day.weekday);
+    const card = el(`
+      <button class="card p-3 text-left flex flex-col gap-1.5" style="${isToday ? 'border-color:var(--accent)' : ''} min-height:110px">
+        <div class="flex items-baseline justify-between">
+          <span class="text-xs font-medium" style="color:${isToday ? 'var(--accent)' : 'var(--text-muted)'}">${WEEKDAY_LABELS[day.weekday]}</span>
+          <span class="text-sm font-semibold" style="${isToday ? 'color:var(--accent)' : ''}">${day.day}.</span>
+        </div>
+        <div class="flex-1 space-y-1"></div>
+      </button>`);
+    const body = card.querySelector(".flex-1");
+    dayRecurring.forEach(r => body.appendChild(el(`<div class="text-xs px-1.5 py-0.5 rounded" style="background:var(--surface-2); color:var(--text-muted)">↻ ${escapeHtml(r.title)}</div>`)));
+    dayEvents.forEach(e => {
+      const isAbsence = e.type === "absence";
+      body.appendChild(el(`<div class="text-xs px-1.5 py-0.5 rounded truncate" style="background:${isAbsence ? 'var(--danger-soft)' : 'var(--tbg-soft)'}; color:${isAbsence ? 'var(--danger)' : 'var(--tbg)'}">${escapeHtml(e.title)}${e.person ? ' · ' + escapeHtml(e.person) : ''}</div>`));
+    });
+    if (!dayRecurring.length && !dayEvents.length) body.appendChild(el(`<div class="text-xs" style="color:var(--text-muted); opacity:0.6">–</div>`));
+    card.addEventListener("click", () => { state.calSelectedDate = day.iso; render(); });
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
 }
 
 function renderCalendarSection(isAdmin) {
@@ -1444,6 +1543,20 @@ function renderCalendarSection(isAdmin) {
         recForm.classList.add("hidden");
       });
     });
+  }
+
+  const viewToggle = el(`
+    <div class="flex gap-2 mb-4">
+      <button id="view-week" class="btn ${state.calView === "week" ? "btn-accent" : "btn-ghost"} px-3 py-1.5 text-sm">Woche</button>
+      <button id="view-month" class="btn ${state.calView === "month" ? "btn-accent" : "btn-ghost"} px-3 py-1.5 text-sm">Monat</button>
+    </div>`);
+  wrap.appendChild(viewToggle);
+  viewToggle.querySelector("#view-week").addEventListener("click", () => { state.calView = "week"; render(); });
+  viewToggle.querySelector("#view-month").addEventListener("click", () => { state.calView = "month"; render(); });
+
+  if (state.calView === "week") {
+    wrap.appendChild(renderWeekView());
+    return wrap;
   }
 
   if (!state.calMonth) state.calMonth = new Date().toISOString().slice(0, 7);
