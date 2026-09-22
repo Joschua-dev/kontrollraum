@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kontrollraum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.2/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.2/firebase-storage-compat.js"></script>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    --bg: #F6F4EF;
+    --surface: #FFFFFF;
+    --surface-2: #FBF9F5;
+    --border: #E5E1D8;
+    --text: #201D18;
+    --text-muted: #726C5F;
+    --accent: #C07C21;
+    --accent-ink: #FFFFFF;
+    --tbg: #2F6F63;
+    --tbg-soft: #E4F0EC;
+    --tca: #3B5B7A;
+    --tca-soft: #E6ECF3;
+    --danger: #B0442A;
+    --danger-soft: #F6E4DF;
+    --success: #3F7A4E;
+    --shadow: 0 1px 2px rgba(32,29,24,0.06);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #14171A;
+      --surface: #1C2024;
+      --surface-2: #202428;
+      --border: #2C3136;
+      --text: #EDEBE5;
+      --text-muted: #9B968A;
+      --accent: #D89A45;
+      --accent-ink: #14171A;
+      --tbg: #4E9284;
+      --tbg-soft: #1D2C29;
+      --tca: #7095B8;
+      --tca-soft: #1D2733;
+      --danger: #D07153;
+      --danger-soft: #2E211D;
+      --success: #5A9A6A;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171A;
+    --surface: #1C2024;
+    --surface-2: #202428;
+    --border: #2C3136;
+    --text: #EDEBE5;
+    --text-muted: #9B968A;
+    --accent: #D89A45;
+    --accent-ink: #14171A;
+    --tbg: #4E9284;
+    --tbg-soft: #1D2C29;
+    --tca: #7095B8;
+    --tca-soft: #1D2733;
+    --danger: #D07153;
+    --danger-soft: #2E211D;
+    --success: #5A9A6A;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, .display {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    letter-spacing: -0.01em;
+  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+  .btn { font-family: 'Inter', sans-serif; font-weight: 600; border-radius: 8px; transition: background-color .15s, border-color .15s, opacity .15s; }
+  .btn-accent { background: var(--accent); color: var(--accent-ink); }
+  .btn-accent:hover { opacity: .88; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-ghost:hover { background: var(--surface-2); }
+  input, select, textarea {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+  }
+  input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  ::placeholder { color: var(--text-muted); opacity: 1; }
+  .tag-tbg { background: var(--tbg-soft); color: var(--tbg); }
+  .tag-tca { background: var(--tca-soft); color: var(--tca); }
+  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+  .pin-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--text-muted); }
+  .pin-dot.filled { background: var(--accent); border-color: var(--accent); }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) { .fade-in { animation: none; } }
+  .nav-item[aria-current="true"] { background: var(--surface-2); color: var(--text); }
+  .nav-item[aria-current="true"] .nav-dot { background: var(--accent); }
+  .soon-badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div id="root" class="min-h-screen"></div>
+
+<script>
+/* =========================================================================
+   KONFIGURATION
+   Firebase-Projekt-Konfiguration hier eintragen (Projekteinstellungen ->
+   "Web-App" -> Konfiguration). Diese Werte sind clientseitig sichtbar
+   und öffentlich, das ist bei Firebase normal — der eigentliche Schutz
+   passiert über Firestore-Regeln.
+   ========================================================================= */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAPJnHz6IfsA-YVVXxhAJVHrV5-EYWiRng",
+  authDomain: "orgaapp-b648a.firebaseapp.com",
+  projectId: "orgaapp-b648a",
+  storageBucket: "orgaapp-b648a.firebasestorage.app",
+  appId: "1:95708827716:web:fffbdd070fc89f6d15ac11"
+};
+
+const ROLES = {
+  admin:       { label: "Admin",       shared: false },
+  gm:          { label: "GM",          shared: true },
+  construction:{ label: "Construction",shared: true },
+  technik:     { label: "Technik",     shared: true }
+};
+const CATEGORY_LABELS = { TBG: "TBG", TCA: "TCA" };
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+let db = null;
+let storage = null;
+let firebaseReady = false;
+let currentUser = null; // { id, name, role }
+let rooms = [];
+let adminUsers = [];
+let repairs = [];
+let roomsUnsub = null;
+let repairsUnsub = null;
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false };
+
+const REPAIR_STATUSES = [
+  { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
+  { key: "in_bearbeitung", label: "In Bearbeitung", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
+];
+function statusMeta(key) { return REPAIR_STATUSES.find(s => s.key === key) || REPAIR_STATUSES[0]; }
+
+/* =========================================================================
+   HELPERS
+   ========================================================================= */
+function simpleHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+function isConfigured() {
+  return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY" && FIREBASE_CONFIG.projectId !== "YOUR_PROJECT";
+}
+function applyTheme(mode) {
+  document.documentElement.setAttribute("data-theme", mode);
+  try { localStorage.setItem("kr_theme", mode); } catch (e) {}
+}
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem("kr_theme"); } catch (e) {}
+  if (saved === "dark" || saved === "light") applyTheme(saved);
+  else document.documentElement.removeAttribute("data-theme");
+}
+function currentThemeIsDark() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "dark") return true;
+  if (attr === "light") return false;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function saveSession(user) {
+  try { localStorage.setItem("kr_session", JSON.stringify(user)); } catch (e) {}
+}
+function loadSession() {
+  try { const raw = localStorage.getItem("kr_session"); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem("kr_session"); } catch (e) {}
+}
+function el(html) {
+  const t = document.createElement("template");
+  t.innerHTML = html.trim();
+  return t.content.firstElementChild;
+}
+function escapeHtml(str) {
+  return (str || "").replace(/[&<>"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[m]));
+}
+function formatDate(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" }) + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+function getAuthorName() {
+  if (currentUser.role === "admin") return currentUser.name;
+  const storeKey = "kr_display_name_" + currentUser.role;
+  let name = null;
+  try { name = localStorage.getItem(storeKey); } catch (e) {}
+  if (!name) {
+    name = prompt("Dein Name (wird bei Kommentaren angezeigt):");
+    if (name && name.trim()) { try { localStorage.setItem(storeKey, name.trim()); } catch (e) {} }
+  }
+  return name && name.trim() ? `${name.trim()} (${ROLES[currentUser.role].label})` : ROLES[currentUser.role].label;
+}
+
+/* =========================================================================
+   FIREBASE INIT + DATA
+   ========================================================================= */
+function initFirebase() {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+    storage = firebase.storage();
+    firebaseReady = true;
+  } catch (e) {
+    console.error("Firebase init error", e);
+    firebaseReady = false;
+  }
+}
+
+async function fetchAdminUsers() {
+  const snap = await db.collection("users").where("role", "==", "admin").get();
+  adminUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return adminUsers;
+}
+
+async function fetchRoleAccount(role) {
+  const doc = await db.collection("roleAccounts").doc(role).get();
+  return doc.exists ? doc.data() : null;
+}
+
+function subscribeRooms(cb) {
+  if (roomsUnsub) roomsUnsub();
+  roomsUnsub = db.collection("rooms").orderBy("name").onSnapshot(snap => {
+    rooms = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("rooms sub error", err));
+}
+
+function subscribeRepairs(cb) {
+  if (repairsUnsub) repairsUnsub();
+  repairsUnsub = db.collection("repairs").orderBy("createdAt", "desc").onSnapshot(snap => {
+    repairs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("repairs sub error", err));
+}
+
+async function uploadRepairImage(file) {
+  const path = `repairs/${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name}`;
+  const ref = storage.ref().child(path);
+  await ref.put(file);
+  return await ref.getDownloadURL();
+}
+
+/* =========================================================================
+   RENDER: ROOT
+   ========================================================================= */
+function render() {
+  const root = document.getElementById("root");
+  root.innerHTML = "";
+  if (!isConfigured()) { root.appendChild(renderSetupScreen()); return; }
+  if (state.screen === "loading") { root.appendChild(renderLoading()); return; }
+  if (state.screen === "bootstrap") { root.appendChild(renderBootstrap()); return; }
+  if (state.screen === "login") { root.appendChild(renderLogin()); return; }
+  if (state.screen === "app") { root.appendChild(renderAppShell()); return; }
+}
+
+function renderLoading() {
+  return el(`
+    <div class="min-h-screen flex items-center justify-center">
+      <div class="text-sm" style="color:var(--text-muted)">Lädt…</div>
+    </div>`);
+}
+
+/* =========================================================================
+   SETUP SCREEN (Firebase noch nicht konfiguriert)
+   ========================================================================= */
+function renderSetupScreen() {
+  return el(`
+    <div class="min-h-screen flex items-center justify-center p-6">
+      <div class="card max-w-lg w-full p-8 fade-in">
+        <h1 class="text-2xl font-semibold mb-2">Kontrollraum einrichten</h1>
+        <p class="text-sm mb-5" style="color:var(--text-muted)">
+          Diese App braucht ein eigenes Firebase-Projekt (kostenlos), um Daten zu speichern.
+          Sobald die Zugangsdaten eingetragen sind, lädt die App automatisch.
+        </p>
+        <ol class="text-sm space-y-2 mb-5 list-decimal list-inside" style="color:var(--text)">
+          <li>Firebase-Projekt anlegen auf console.firebase.google.com</li>
+          <li>Firestore Database aktivieren (im Produktionsmodus)</li>
+          <li>Unter Projekteinstellungen → "Web-App hinzufügen" die Konfiguration kopieren</li>
+          <li>Die Werte an den Entwickler dieser App weitergeben, damit sie eingetragen werden</li>
+        </ol>
+        <div class="text-xs p-3 rounded-lg" style="background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border)">
+          Sobald konfiguriert, richtet die App beim ersten Start automatisch den ersten Admin-Zugang ein.
+        </div>
+      </div>
+    </div>`);
+}
+
+/* =========================================================================
+   BOOTSTRAP (erster Admin wird angelegt)
+   ========================================================================= */
+function renderBootstrap() {
+  const wrap = el(`
+    <div class="min-h-screen flex items-center justify-center p-6">
+      <div class="card max-w-sm w-full p-8 fade-in">
+        <h1 class="text-xl font-semibold mb-1">Willkommen</h1>
+        <p class="text-sm mb-5" style="color:var(--text-muted)">Noch kein Admin-Zugang vorhanden. Lege den ersten an.</p>
+        <label class="text-xs font-medium block mb-1" style="color:var(--text-muted)">Name</label>
+        <input id="bs-name" type="text" placeholder="z.B. Alex" class="w-full px-3 py-2 mb-4 text-sm">
+        <label class="text-xs font-medium block mb-1" style="color:var(--text-muted)">PIN (4-6 Ziffern)</label>
+        <input id="bs-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" class="w-full px-3 py-2 mb-5 text-sm">
+        <button id="bs-submit" class="btn btn-accent w-full py-2 text-sm">Admin-Zugang erstellen</button>
+        <div id="bs-error" class="text-xs mt-3" style="color:var(--danger)"></div>
+      </div>
+    </div>`);
+  wrap.querySelector("#bs-submit").addEventListener("click", async () => {
+    const name = wrap.querySelector("#bs-name").value.trim();
+    const pin = wrap.querySelector("#bs-pin").value.trim();
+    const errBox = wrap.querySelector("#bs-error");
+    if (!name || !/^[0-9]{4,6}$/.test(pin)) { errBox.textContent = "Bitte Namen und eine 4-6-stellige PIN angeben."; return; }
+    try {
+      const ref = await db.collection("users").add({ name, role: "admin", pin: simpleHash(pin), createdAt: Date.now() });
+      currentUser = { id: ref.id, name, role: "admin" };
+      saveSession(currentUser);
+      await goToApp();
+    } catch (e) {
+      errBox.textContent = "Fehler beim Erstellen. Firestore-Regeln prüfen.";
+      console.error(e);
+    }
+  });
+  return wrap;
+}
+
+/* =========================================================================
+   LOGIN
+   ========================================================================= */
+function renderLogin() {
+  const wrap = el(`
+    <div class="min-h-screen flex items-center justify-center p-6">
+      <div class="w-full max-w-sm fade-in">
+        <div class="text-center mb-8">
+          <div class="text-2xl font-semibold display">Kontrollraum</div>
+          <div class="text-sm mt-1" style="color:var(--text-muted)">Wählt euren Zugang</div>
+        </div>
+        <div id="role-grid" class="grid grid-cols-2 gap-3 mb-2"></div>
+        <div id="login-step2"></div>
+      </div>
+    </div>`);
+  const grid = wrap.querySelector("#role-grid");
+  Object.entries(ROLES).forEach(([key, r]) => {
+    const btn = el(`<button class="card py-5 text-sm font-semibold" style="color:var(--text)">${escapeHtml(r.label)}</button>`);
+    btn.addEventListener("click", () => onRoleSelect(key, wrap));
+    grid.appendChild(btn);
+  });
+  return wrap;
+}
+
+async function onRoleSelect(roleKey, wrap) {
+  const step2 = wrap.querySelector("#login-step2");
+  step2.innerHTML = "";
+  if (roleKey === "admin") {
+    if (!adminUsers.length) await fetchAdminUsers();
+    const box = el(`<div class="card p-4 mt-4 fade-in"></div>`);
+    const title = el(`<div class="text-xs font-medium mb-3" style="color:var(--text-muted)">Wer bist du?</div>`);
+    box.appendChild(title);
+    const list = el(`<div class="grid grid-cols-2 gap-2"></div>`);
+    adminUsers.forEach(u => {
+      const b = el(`<button class="btn btn-ghost py-2 text-sm">${escapeHtml(u.name)}</button>`);
+      b.addEventListener("click", () => renderPinPad(step2, { mode: "admin", user: u }));
+      list.appendChild(b);
+    });
+    box.appendChild(list);
+    step2.appendChild(box);
+  } else {
+    const account = await fetchRoleAccount(roleKey);
+    if (!account) {
+      step2.appendChild(el(`<div class="text-xs mt-4" style="color:var(--danger)">Für diese Rolle ist noch keine PIN eingerichtet. Ein Admin kann das in den Einstellungen tun.</div>`));
+      return;
+    }
+    renderPinPad(step2, { mode: "role", role: roleKey, account });
+  }
+}
+
+function renderPinPad(container, ctx) {
+  container.innerHTML = "";
+  let pin = "";
+  const label = ctx.mode === "admin" ? ctx.user.name : ROLES[ctx.role].label;
+  const box = el(`
+    <div class="card p-5 mt-4 fade-in">
+      <div class="text-sm font-medium mb-3">PIN für ${escapeHtml(label)}</div>
+      <div id="pin-dots" class="flex gap-2 justify-center mb-4"></div>
+      <div id="pin-error" class="text-xs text-center mb-2" style="color:var(--danger); min-height:14px"></div>
+      <div id="pin-keys" class="grid grid-cols-3 gap-2"></div>
+    </div>`);
+  const dots = box.querySelector("#pin-dots");
+  const keys = box.querySelector("#pin-keys");
+  function refreshDots() {
+    dots.innerHTML = "";
+    for (let i = 0; i < 6; i++) {
+      dots.appendChild(el(`<div class="pin-dot${i < pin.length ? " filled" : ""}"></div>`));
+    }
+  }
+  refreshDots();
+  const keyList = ["1","2","3","4","5","6","7","8","9","⌫","0","OK"];
+  keyList.forEach(k => {
+    const b = el(`<button class="btn btn-ghost py-3 text-sm font-semibold">${k}</button>`);
+    b.addEventListener("click", async () => {
+      const errBox = box.querySelector("#pin-error");
+      if (k === "⌫") { pin = pin.slice(0, -1); refreshDots(); return; }
+      if (k === "OK") {
+        const hash = simpleHash(pin);
+        let expected, userObj;
+        if (ctx.mode === "admin") { expected = ctx.user.pin; userObj = { id: ctx.user.id, name: ctx.user.name, role: "admin" }; }
+        else { expected = ctx.account.pin; userObj = { id: ctx.role, name: ROLES[ctx.role].label, role: ctx.role }; }
+        if (hash === expected) {
+          currentUser = userObj;
+          saveSession(currentUser);
+          await goToApp();
+        } else {
+          errBox.textContent = "Falsche PIN.";
+          pin = ""; refreshDots();
+        }
+        return;
+      }
+      if (pin.length < 6) { pin += k; refreshDots(); }
+      if (pin.length >= 4 && k !== "⌫") { /* allow manual OK */ }
+    });
+    keys.appendChild(b);
+  });
+  container.appendChild(box);
+}
+
+async function goToApp() {
+  state.screen = "app";
+  state.category = "TBG";
+  subscribeRooms(render);
+  subscribeRepairs(render);
+  render();
+}
+
+function logout() {
+  clearSession();
+  currentUser = null;
+  if (roomsUnsub) { roomsUnsub(); roomsUnsub = null; }
+  if (repairsUnsub) { repairsUnsub(); repairsUnsub = null; }
+  state.screen = "login";
+  render();
+}
+
+/* =========================================================================
+   APP SHELL
+   ========================================================================= */
+const NAV_ITEMS = [
+  { key: "rooms", label: "Räume", ready: true },
+  { key: "reparaturen", label: "Reparaturen", ready: true },
+  { key: "bestellungen", label: "Bestellungen", ready: false },
+  { key: "pinnwand", label: "Pinnwand", ready: false },
+  { key: "kalender", label: "Kalender", ready: false },
+  { key: "infos", label: "Infos", ready: false }
+];
+
+function renderAppShell() {
+  const isAdmin = currentUser && currentUser.role === "admin";
+  const wrap = el(`
+    <div class="min-h-screen flex flex-col md:flex-row">
+      <aside class="md:w-56 w-full md:h-screen border-b md:border-b-0 md:border-r flex md:flex-col" style="border-color:var(--border); background:var(--surface)">
+        <div class="p-4 hidden md:block">
+          <div class="text-lg font-semibold display">Kontrollraum</div>
+          <div class="text-xs mt-0.5" style="color:var(--text-muted)">Hamburg</div>
+        </div>
+        <nav id="nav" class="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible px-2 md:px-3 gap-1 py-2 md:py-0 scrollbar-thin"></nav>
+        <div class="hidden md:block p-3 border-t" style="border-color:var(--border)">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(currentUser.name)} · ${escapeHtml(ROLES[currentUser.role].label)}</div>
+          </div>
+          <div class="flex gap-2">
+            <button id="theme-toggle" class="btn btn-ghost flex-1 py-1.5 text-xs">🌓 Modus</button>
+            <button id="logout-btn" class="btn btn-ghost flex-1 py-1.5 text-xs">Abmelden</button>
+          </div>
+        </div>
+      </aside>
+      <main id="main" class="flex-1 overflow-y-auto scrollbar-thin" style="max-height:100vh"></main>
+    </div>`);
+
+  const nav = wrap.querySelector("#nav");
+  NAV_ITEMS.concat(isAdmin ? [{ key: "settings", label: "Einstellungen", ready: true }] : []).forEach(item => {
+    const active = state.screen === "app" && (state.currentSection || "rooms") === item.key;
+    const btn = el(`
+      <button class="nav-item flex items-center gap-2 px-3 py-2 rounded-lg text-sm whitespace-nowrap md:whitespace-normal text-left" ${active ? 'aria-current="true"' : ''} style="color:var(--text)">
+        <span class="nav-dot w-1.5 h-1.5 rounded-full" style="background:var(--border)"></span>
+        <span>${escapeHtml(item.label)}</span>
+        ${!item.ready ? '<span class="soon-badge ml-auto hidden md:inline">bald</span>' : ''}
+      </button>`);
+    btn.addEventListener("click", () => {
+      if (!item.ready) return;
+      state.currentSection = item.key;
+      state.openRoomId = null;
+      state.openRepairId = null;
+      if (item.key !== "reparaturen") state.repairRoomId = null;
+      render();
+    });
+    nav.appendChild(btn);
+  });
+
+  const mobileFooter = el(`
+    <div class="flex md:hidden items-center gap-2 px-3 py-2 border-t" style="border-color:var(--border); background:var(--surface)">
+      <div class="text-xs flex-1 truncate" style="color:var(--text-muted)">${escapeHtml(currentUser.name)} · ${escapeHtml(ROLES[currentUser.role].label)}</div>
+      <button id="theme-toggle-m" class="btn btn-ghost px-3 py-1.5 text-xs">🌓</button>
+      <button id="logout-btn-m" class="btn btn-ghost px-3 py-1.5 text-xs">Abmelden</button>
+    </div>`);
+  wrap.appendChild(mobileFooter);
+
+  const main = wrap.querySelector("#main");
+  const section = state.currentSection || "rooms";
+  if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
+  else if (section === "reparaturen") main.appendChild(renderRepairsSection());
+  else if (section === "settings") main.appendChild(renderSettingsSection());
+  else main.appendChild(renderComingSoon(NAV_ITEMS.find(n => n.key === section).label));
+
+  const toggleTheme = () => applyTheme(currentThemeIsDark() ? "light" : "dark") || render();
+  wrap.querySelector("#theme-toggle").addEventListener("click", toggleTheme);
+  wrap.querySelector("#theme-toggle-m").addEventListener("click", toggleTheme);
+  wrap.querySelector("#logout-btn").addEventListener("click", logout);
+  wrap.querySelector("#logout-btn-m").addEventListener("click", logout);
+
+  if (state.openRoomId) {
+    wrap.appendChild(renderRoomDetail(isAdmin));
+  }
+  if (state.openRepairId) {
+    wrap.appendChild(renderRepairDetail());
+  }
+  return wrap;
+}
+
+function renderComingSoon(label) {
+  return el(`
+    <div class="p-8 flex items-center justify-center" style="min-height:60vh">
+      <div class="text-center fade-in">
+        <div class="text-lg font-semibold mb-1">${escapeHtml(label)}</div>
+        <div class="text-sm" style="color:var(--text-muted)">Kommt als Nächstes.</div>
+      </div>
+    </div>`);
+}
+
+/* =========================================================================
+   RÄUME
+   ========================================================================= */
+function renderRoomsSection(isAdmin) {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  const header = el(`
+    <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+      <div>
+        <h1 class="text-xl font-semibold">Räume</h1>
+        <div class="text-sm" style="color:var(--text-muted)">Hamburg</div>
+      </div>
+      <div class="flex gap-2">
+        <div id="cat-tabs" class="flex rounded-lg overflow-hidden border" style="border-color:var(--border)"></div>
+        ${isAdmin ? '<button id="add-room-btn" class="btn btn-accent px-3 py-2 text-sm">+ Raum</button>' : ''}
+      </div>
+    </div>`);
+  wrap.appendChild(header);
+
+  const tabs = header.querySelector("#cat-tabs");
+  ["TBG", "TCA"].forEach(cat => {
+    const active = state.category === cat;
+    const b = el(`<button class="px-4 py-2 text-sm font-medium" style="${active ? 'background:var(--accent); color:var(--accent-ink)' : 'background:var(--surface); color:var(--text)'}">${escapeHtml(CATEGORY_LABELS[cat])}</button>`);
+    b.addEventListener("click", () => { state.category = cat; render(); });
+    tabs.appendChild(b);
+  });
+
+  const filtered = rooms.filter(r => r.category === state.category);
+  if (!filtered.length) {
+    wrap.appendChild(el(`
+      <div class="card p-10 text-center" style="color:var(--text-muted)">
+        <div class="text-sm">Noch keine Räume in ${escapeHtml(CATEGORY_LABELS[state.category])}.</div>
+        ${isAdmin ? '<div class="text-xs mt-1">Mit "+ Raum" den ersten anlegen.</div>' : ''}
+      </div>`));
+  } else {
+    const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
+    filtered.forEach(r => {
+      const card = el(`
+        <button class="card p-4 text-left hover:opacity-90">
+          <div class="flex items-start justify-between mb-2">
+            <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+            <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+          </div>
+          <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(r.address || "Keine Adresse hinterlegt")}</div>
+        </button>`);
+      card.addEventListener("click", () => { state.openRoomId = r.id; state.roomEdit = false; render(); });
+      grid.appendChild(card);
+    });
+    wrap.appendChild(grid);
+  }
+
+  if (isAdmin) {
+    const addBtn = header.querySelector("#add-room-btn");
+    if (addBtn) addBtn.addEventListener("click", () => openRoomForm(null));
+  }
+  return wrap;
+}
+
+const ROOM_FIELDS = [
+  { key: "address", label: "Adresse" },
+  { key: "phone", label: "Telefon" },
+  { key: "contact", label: "Ansprechpartner" },
+  { key: "hours", label: "Öffnungszeiten" },
+  { key: "access", label: "Zugänge & Codes" },
+  { key: "notes", label: "Besonderheiten / Notizen" }
+];
+
+function renderRoomDetail(isAdmin) {
+  const room = rooms.find(r => r.id === state.openRoomId);
+  if (!room) return el(`<div></div>`);
+  const overlay = el(`
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
+      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <div class="text-xs mb-1"><span class="px-2 py-0.5 rounded-full tag-${room.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[room.category])}</span></div>
+            <h2 class="text-xl font-semibold">${escapeHtml(room.name)}</h2>
+          </div>
+          <button id="close-detail" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
+        </div>
+        <div id="detail-body"></div>
+        ${isAdmin ? `<div class="flex gap-2 mt-5 pt-4 border-t" style="border-color:var(--border)">
+          <button id="edit-room" class="btn btn-ghost flex-1 py-2 text-sm">Bearbeiten</button>
+          <button id="delete-room" class="btn flex-1 py-2 text-sm" style="background:var(--danger-soft); color:var(--danger)">Löschen</button>
+        </div>` : ''}
+      </div>
+    </div>`);
+
+  const body = overlay.querySelector("#detail-body");
+  if (!state.roomEdit) {
+    ROOM_FIELDS.forEach(f => {
+      const val = room[f.key];
+      body.appendChild(el(`
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
+          <div class="text-sm whitespace-pre-wrap">${val ? escapeHtml(val) : '<span style="color:var(--text-muted)">—</span>'}</div>
+        </div>`));
+    });
+  } else {
+    body.appendChild(renderRoomForm(room));
+  }
+
+  overlay.querySelector("#close-detail").addEventListener("click", () => { state.openRoomId = null; state.roomEdit = false; render(); });
+  if (isAdmin) {
+    overlay.querySelector("#edit-room").addEventListener("click", () => { state.roomEdit = !state.roomEdit; render(); });
+    overlay.querySelector("#delete-room").addEventListener("click", async () => {
+      if (confirm(`"${room.name}" wirklich löschen?`)) {
+        await db.collection("rooms").doc(room.id).delete();
+        state.openRoomId = null;
+        render();
+      }
+    });
+  }
+  return overlay;
+}
+
+function renderRoomForm(room) {
+  const form = el(`<div></div>`);
+  const nameRow = el(`
+    <div class="mb-3">
+      <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Name</div>
+      <input id="f-name" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(room ? room.name : "")}">
+    </div>`);
+  form.appendChild(nameRow);
+  const catRow = el(`
+    <div class="mb-3">
+      <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Kategorie</div>
+      <select id="f-category" class="w-full px-3 py-2 text-sm">
+        <option value="TBG" ${room && room.category === "TBG" ? "selected" : ""}>TBG</option>
+        <option value="TCA" ${room && room.category === "TCA" ? "selected" : ""}>TCA</option>
+      </select>
+    </div>`);
+  form.appendChild(catRow);
+  ROOM_FIELDS.forEach(f => {
+    const isArea = f.key === "access" || f.key === "notes";
+    const val = room ? (room[f.key] || "") : "";
+    const field = el(`
+      <div class="mb-3">
+        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
+        ${isArea
+          ? `<textarea id="f-${f.key}" rows="3" class="w-full px-3 py-2 text-sm">${escapeHtml(val)}</textarea>`
+          : `<input id="f-${f.key}" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(val)}">`}
+      </div>`);
+    form.appendChild(field);
+  });
+  const saveBtn = el(`<button id="save-room" class="btn btn-accent w-full py-2 text-sm mt-2">Speichern</button>`);
+  form.appendChild(saveBtn);
+  saveBtn.addEventListener("click", async () => {
+    const data = {
+      name: form.querySelector("#f-name").value.trim(),
+      category: form.querySelector("#f-category").value
+    };
+    ROOM_FIELDS.forEach(f => { data[f.key] = form.querySelector(`#f-${f.key}`).value.trim(); });
+    if (!data.name) { alert("Bitte einen Namen angeben."); return; }
+    if (room) await db.collection("rooms").doc(room.id).update(data);
+    else { const ref = await db.collection("rooms").add(data); state.openRoomId = ref.id; }
+    state.roomEdit = false;
+    render();
+  });
+  return form;
+}
+
+function openRoomForm(room) {
+  state.openRoomId = "new";
+  state.roomEdit = true;
+  const tempRoom = { id: "new", name: "", category: state.category };
+  rooms.push(tempRoom);
+  render();
+  rooms = rooms.filter(r => r.id !== "new");
+}
+
+/* =========================================================================
+   REPARATURBOARD
+   ========================================================================= */
+function renderRepairsSection() {
+  if (!state.repairRoomId) return renderRepairRoomPicker();
+  return renderRepairBoard();
+}
+
+function renderRepairRoomPicker() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Reparaturen</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Standort wählen</div>
+    </div>`));
+  if (!rooms.length) {
+    wrap.appendChild(el(`<div class="card p-10 text-center text-sm" style="color:var(--text-muted)">Erst müssen Räume angelegt werden (unter "Räume").</div>`));
+    return wrap;
+  }
+  const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
+  rooms.forEach(r => {
+    const openCount = repairs.filter(t => t.roomId === r.id && t.status !== "erledigt").length;
+    const card = el(`
+      <button class="card p-4 text-left hover:opacity-90">
+        <div class="flex items-start justify-between mb-2">
+          <div class="font-semibold text-sm">${escapeHtml(r.name)}</div>
+          <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+        </div>
+        <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Meldungen" : openCount + " offen"}</div>
+      </button>`);
+    card.addEventListener("click", () => { state.repairRoomId = r.id; render(); });
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function renderRepairBoard() {
+  const room = rooms.find(r => r.id === state.repairRoomId);
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  if (!room) { state.repairRoomId = null; wrap.appendChild(el(`<div></div>`)); return wrap; }
+
+  const header = el(`
+    <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+      <div>
+        <button id="back-to-picker" class="text-xs mb-1" style="color:var(--text-muted)">← Alle Standorte</button>
+        <h1 class="text-xl font-semibold">Reparaturen · ${escapeHtml(room.name)}</h1>
+      </div>
+      <button id="new-ticket-btn" class="btn btn-accent px-3 py-2 text-sm">+ Meldung</button>
+    </div>`);
+  wrap.appendChild(header);
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.repairRoomId = null; render(); });
+  header.querySelector("#new-ticket-btn").addEventListener("click", () => openTicketForm(room.id));
+
+  const roomTickets = repairs.filter(t => t.roomId === room.id);
+  const cols = el(`<div class="grid md:grid-cols-2 gap-4 mb-6"></div>`);
+  ["offen", "in_bearbeitung"].forEach(statusKey => {
+    const meta = statusMeta(statusKey);
+    const items = roomTickets.filter(t => t.status === statusKey);
+    const col = el(`
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="w-2 h-2 rounded-full" style="background:${meta.color}"></span>
+          <span class="text-sm font-medium">${meta.label}</span>
+          <span class="text-xs" style="color:var(--text-muted)">${items.length}</span>
+        </div>
+        <div class="space-y-2" id="col-${statusKey}"></div>
+      </div>`);
+    const list = col.querySelector(`#col-${statusKey}`);
+    if (!items.length) list.appendChild(el(`<div class="text-xs p-3 card" style="color:var(--text-muted)">Keine Einträge</div>`));
+    items.forEach(t => list.appendChild(renderTicketCard(t)));
+    cols.appendChild(col);
+  });
+  wrap.appendChild(cols);
+
+  const archived = roomTickets.filter(t => t.status === "erledigt");
+  const archiveBox = el(`
+    <div>
+      <button id="toggle-archive" class="text-xs font-medium mb-2" style="color:var(--text-muted)">
+        ${state.showRepairArchive ? "▾" : "▸"} Archiv (erledigt) · ${archived.length}
+      </button>
+      <div id="archive-list" class="space-y-2"></div>
+    </div>`);
+  archiveBox.querySelector("#toggle-archive").addEventListener("click", () => { state.showRepairArchive = !state.showRepairArchive; render(); });
+  if (state.showRepairArchive) {
+    const list = archiveBox.querySelector("#archive-list");
+    if (!archived.length) list.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch nichts archiviert.</div>`));
+    archived.forEach(t => list.appendChild(renderTicketCard(t)));
+  }
+  wrap.appendChild(archiveBox);
+
+  return wrap;
+}
+
+function renderTicketCard(t) {
+  const meta = statusMeta(t.status);
+  const card = el(`
+    <button class="card p-3 text-left w-full hover:opacity-90">
+      <div class="flex items-start justify-between gap-2 mb-1">
+        <div class="text-sm font-medium">${escapeHtml(t.title)}</div>
+        <span class="text-xs px-2 py-0.5 rounded-full shrink-0" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
+      </div>
+      <div class="text-xs flex items-center gap-3" style="color:var(--text-muted)">
+        ${t.assignedTo ? `<span>👤 ${escapeHtml(t.assignedTo)}</span>` : ""}
+        ${(t.comments && t.comments.length) ? `<span>💬 ${t.comments.length}</span>` : ""}
+        ${(t.images && t.images.length) ? `<span>📷 ${t.images.length}</span>` : ""}
+      </div>
+    </button>`);
+  card.addEventListener("click", () => { state.openRepairId = t.id; render(); });
+  return card;
+}
+
+function openTicketForm(roomId) {
+  const title = prompt("Kurzer Titel der Meldung:");
+  if (!title || !title.trim()) return;
+  const description = prompt("Beschreibung (optional):") || "";
+  db.collection("repairs").add({
+    roomId, title: title.trim(), description: description.trim(),
+    status: "offen", assignedTo: "", comments: [], images: [],
+    createdBy: getAuthorName(), createdAt: Date.now(), updatedAt: Date.now()
+  }).then(ref => { state.openRepairId = ref.id; render(); });
+}
+
+function renderRepairDetail() {
+  const t = repairs.find(r => r.id === state.openRepairId);
+  if (!t) return el(`<div></div>`);
+  const room = rooms.find(r => r.id === t.roomId);
+  const meta = statusMeta(t.status);
+  const overlay = el(`
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
+      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+        <div class="flex items-start justify-between mb-1">
+          <span class="text-xs px-2 py-0.5 rounded-full" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
+          <button id="close-ticket" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
+        </div>
+        <h2 class="text-lg font-semibold mb-1">${escapeHtml(t.title)}</h2>
+        <div class="text-xs mb-4" style="color:var(--text-muted)">${room ? escapeHtml(room.name) : ""} · angelegt von ${escapeHtml(t.createdBy || "?")} · ${formatDate(t.createdAt)}</div>
+
+        ${t.description ? `<div class="text-sm mb-4 whitespace-pre-wrap">${escapeHtml(t.description)}</div>` : ""}
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Status</div>
+          <div id="status-buttons" class="flex gap-2"></div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Zugewiesen an</div>
+          <div class="flex gap-2">
+            <input id="assign-input" type="text" class="flex-1 px-3 py-2 text-sm" value="${escapeHtml(t.assignedTo || "")}" placeholder="Name eintragen">
+            <button id="assign-save" class="btn btn-ghost px-3 py-2 text-sm">OK</button>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-medium mb-2" style="color:var(--text-muted)">Bilder</div>
+          <div id="image-grid" class="grid grid-cols-3 gap-2 mb-2"></div>
+          <input id="image-input" type="file" accept="image/*" capture="environment" class="text-xs">
+          <div id="image-status" class="text-xs mt-1" style="color:var(--text-muted)"></div>
+        </div>
+
+        <div>
+          <div class="text-xs font-medium mb-2" style="color:var(--text-muted)">Kommentare</div>
+          <div id="comment-list" class="space-y-2 mb-3"></div>
+          <div class="flex gap-2">
+            <input id="comment-input" type="text" class="flex-1 px-3 py-2 text-sm" placeholder="Kommentar schreiben…">
+            <button id="comment-send" class="btn btn-accent px-3 py-2 text-sm">Senden</button>
+          </div>
+        </div>
+
+        <button id="delete-ticket" class="text-xs mt-6" style="color:var(--danger)">Meldung löschen</button>
+      </div>
+    </div>`);
+
+  overlay.querySelector("#close-ticket").addEventListener("click", () => { state.openRepairId = null; render(); });
+
+  const statusBox = overlay.querySelector("#status-buttons");
+  REPAIR_STATUSES.forEach(s => {
+    const active = t.status === s.key;
+    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
+    b.addEventListener("click", async () => {
+      await db.collection("repairs").doc(t.id).update({ status: s.key, updatedAt: Date.now() });
+    });
+    statusBox.appendChild(b);
+  });
+
+  overlay.querySelector("#assign-save").addEventListener("click", async () => {
+    const val = overlay.querySelector("#assign-input").value.trim();
+    await db.collection("repairs").doc(t.id).update({ assignedTo: val, updatedAt: Date.now() });
+  });
+
+  const imgGrid = overlay.querySelector("#image-grid");
+  (t.images || []).forEach(url => {
+    imgGrid.appendChild(el(`<a href="${url}" target="_blank" rel="noopener"><img src="${url}" class="w-full h-16 object-cover rounded" style="border:1px solid var(--border)"></a>`));
+  });
+  overlay.querySelector("#image-input").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const statusEl = overlay.querySelector("#image-status");
+    statusEl.textContent = "Lädt hoch…";
+    try {
+      const url = await uploadRepairImage(file);
+      await db.collection("repairs").doc(t.id).update({
+        images: firebase.firestore.FieldValue.arrayUnion(url), updatedAt: Date.now()
+      });
+      statusEl.textContent = "";
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Fehler beim Hochladen.";
+    }
+  });
+
+  const commentList = overlay.querySelector("#comment-list");
+  (t.comments || []).forEach(c => {
+    commentList.appendChild(el(`
+      <div class="text-sm p-2 rounded-lg" style="background:var(--surface-2)">
+        <div class="text-xs font-medium mb-0.5">${escapeHtml(c.author)} <span style="color:var(--text-muted); font-weight:400">· ${formatDate(c.createdAt)}</span></div>
+        <div>${escapeHtml(c.text)}</div>
+      </div>`));
+  });
+  const sendComment = async () => {
+    const input = overlay.querySelector("#comment-input");
+    const text = input.value.trim();
+    if (!text) return;
+    await db.collection("repairs").doc(t.id).update({
+      comments: firebase.firestore.FieldValue.arrayUnion({ author: getAuthorName(), text, createdAt: Date.now() }),
+      updatedAt: Date.now()
+    });
+    input.value = "";
+  };
+  overlay.querySelector("#comment-send").addEventListener("click", sendComment);
+  overlay.querySelector("#comment-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendComment(); });
+
+  overlay.querySelector("#delete-ticket").addEventListener("click", async () => {
+    if (confirm("Diese Meldung wirklich löschen?")) {
+      await db.collection("repairs").doc(t.id).delete();
+      state.openRepairId = null;
+      render();
+    }
+  });
+
+  return overlay;
+}
+
+/* =========================================================================
+   EINSTELLUNGEN (Admin)
+   ========================================================================= */
+function renderSettingsSection() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in max-w-2xl"></div>`);
+  wrap.appendChild(el(`<h1 class="text-xl font-semibold mb-5">Einstellungen</h1>`));
+  const tabs = el(`<div class="flex gap-2 mb-5"></div>`);
+  [["rooms","Räume"],["people","Personen"]].forEach(([key,label]) => {
+    const active = state.settingsTab === key;
+    const b = el(`<button class="btn ${active ? 'btn-accent' : 'btn-ghost'} px-3 py-1.5 text-sm">${label}</button>`);
+    b.addEventListener("click", () => { state.settingsTab = key; render(); });
+    tabs.appendChild(b);
+  });
+  wrap.appendChild(tabs);
+  if (state.settingsTab === "rooms") wrap.appendChild(renderSettingsRooms());
+  else wrap.appendChild(renderSettingsPeople());
+  return wrap;
+}
+
+function renderSettingsRooms() {
+  const box = el(`<div class="card p-4"></div>`);
+  box.appendChild(el(`<div class="text-sm font-medium mb-3">Alle Räume (${rooms.length})</div>`));
+  if (!rooms.length) box.appendChild(el(`<div class="text-sm" style="color:var(--text-muted)">Noch keine Räume angelegt.</div>`));
+  rooms.forEach(r => {
+    const row = el(`
+      <div class="flex items-center justify-between py-2 border-b last:border-0" style="border-color:var(--border)">
+        <div class="text-sm flex items-center gap-2">
+          <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+          ${escapeHtml(r.name)}
+        </div>
+        <button class="btn btn-ghost px-3 py-1 text-xs">Öffnen</button>
+      </div>`);
+    row.querySelector("button").addEventListener("click", () => {
+      state.category = r.category; state.currentSection = "rooms"; state.openRoomId = r.id; state.roomEdit = false; render();
+    });
+    box.appendChild(row);
+  });
+  const addBtn = el(`<button class="btn btn-accent px-3 py-2 text-sm mt-3">+ Neuen Raum anlegen</button>`);
+  addBtn.addEventListener("click", () => { state.currentSection = "rooms"; render(); openRoomFormDirect(); });
+  box.appendChild(addBtn);
+  return box;
+}
+function openRoomFormDirect() {
+  state.openRoomId = "new_temp";
+  const tempRoom = { id: "new_temp", name: "", category: state.category };
+  rooms.push(tempRoom);
+  state.roomEdit = true;
+  render();
+  rooms = rooms.filter(r => r.id !== "new_temp");
+}
+
+function renderSettingsPeople() {
+  const wrap = el(`<div></div>`);
+
+  const adminBox = el(`<div class="card p-4 mb-4"></div>`);
+  adminBox.appendChild(el(`<div class="text-sm font-medium mb-3">Admin-Zugänge</div>`));
+  const adminList = el(`<div id="admin-list" class="space-y-2 mb-3"></div>`);
+  adminBox.appendChild(adminList);
+  const addAdminBtn = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ Admin hinzufügen</button>`);
+  adminBox.appendChild(addAdminBtn);
+  wrap.appendChild(adminBox);
+
+  fetchAdminUsers().then(list => {
+    adminList.innerHTML = "";
+    list.forEach(u => {
+      const row = el(`
+        <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
+          <span>${escapeHtml(u.name)}</span>
+          <div class="flex gap-2">
+            <button class="btn btn-ghost px-2 py-1 text-xs" data-act="pin">PIN ändern</button>
+            <button class="btn px-2 py-1 text-xs" style="background:var(--danger-soft); color:var(--danger)" data-act="del">Entfernen</button>
+          </div>
+        </div>`);
+      row.querySelector('[data-act="pin"]').addEventListener("click", async () => {
+        const pin = prompt(`Neue PIN für ${u.name} (4-6 Ziffern):`);
+        if (pin && /^[0-9]{4,6}$/.test(pin)) await db.collection("users").doc(u.id).update({ pin: simpleHash(pin) });
+        else if (pin !== null) alert("Ungültige PIN.");
+      });
+      row.querySelector('[data-act="del"]').addEventListener("click", async () => {
+        if (confirm(`${u.name} wirklich entfernen?`)) { await db.collection("users").doc(u.id).delete(); render(); }
+      });
+      adminList.appendChild(row);
+    });
+  });
+
+  addAdminBtn.addEventListener("click", async () => {
+    const name = prompt("Name des neuen Admins:");
+    if (!name) return;
+    const pin = prompt("PIN (4-6 Ziffern):");
+    if (!pin || !/^[0-9]{4,6}$/.test(pin)) { alert("Ungültige PIN."); return; }
+    await db.collection("users").add({ name: name.trim(), role: "admin", pin: simpleHash(pin), createdAt: Date.now() });
+    render();
+  });
+
+  const sharedBox = el(`<div class="card p-4"></div>`);
+  sharedBox.appendChild(el(`<div class="text-sm font-medium mb-3">Geteilte Zugänge (GM, Construction, Technik)</div>`));
+  sharedBox.appendChild(el(`<div class="text-xs mb-3" style="color:var(--text-muted)">Jede Rolle nutzt eine gemeinsame PIN.</div>`));
+  ["gm","construction","technik"].forEach(role => {
+    const row = el(`
+      <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
+        <span>${ROLES[role].label}</span>
+        <button class="btn btn-ghost px-2 py-1 text-xs">PIN setzen</button>
+      </div>`);
+    row.querySelector("button").addEventListener("click", async () => {
+      const pin = prompt(`Neue PIN für ${ROLES[role].label} (4-6 Ziffern):`);
+      if (pin && /^[0-9]{4,6}$/.test(pin)) await db.collection("roleAccounts").doc(role).set({ role, pin: simpleHash(pin) });
+      else if (pin !== null) alert("Ungültige PIN.");
+    });
+    sharedBox.appendChild(row);
+  });
+  wrap.appendChild(sharedBox);
+
+  return wrap;
+}
+
+/* =========================================================================
+   BOOT
+   ========================================================================= */
+async function boot() {
+  initTheme();
+  render();
+  if (!isConfigured()) return;
+  initFirebase();
+  if (!firebaseReady) return;
+  await fetchAdminUsers();
+  if (!adminUsers.length) { state.screen = "bootstrap"; render(); return; }
+  const session = loadSession();
+  if (session && session.role === "admin") {
+    const stillAdmin = adminUsers.find(u => u.id === session.id);
+    if (stillAdmin) { currentUser = { id: stillAdmin.id, name: stillAdmin.name, role: "admin" }; await goToApp(); return; }
+  } else if (session && ROLES[session.role]) {
+    currentUser = session; await goToApp(); return;
+  }
+  state.screen = "login";
+  render();
+}
+boot();
+</script>
+</body>
+</html>
