@@ -159,7 +159,7 @@ let calRecurring = [];
 let calRecurringUnsub = null;
 let infoSections = [];
 let infoUnsub = null;
-let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false };
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, repairShowPicker: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, orderShowPicker: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false, currentStandortId: null };
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -340,6 +340,7 @@ function render() {
   if (state.screen === "loading") { root.appendChild(renderLoading()); return; }
   if (state.screen === "bootstrap") { root.appendChild(renderBootstrap()); return; }
   if (state.screen === "login") { root.appendChild(renderLogin()); return; }
+  if (state.screen === "locationPicker") { root.appendChild(renderLocationPicker()); return; }
   if (state.screen === "app") { root.appendChild(renderAppShell()); return; }
 }
 
@@ -494,7 +495,11 @@ function renderPinPad(container, ctx) {
         if (hash === expected) {
           currentUser = userObj;
           saveSession(currentUser);
-          await goToApp();
+          if (currentUser.role === "admin") {
+            await goToApp();
+          } else {
+            await goToLocationPicker();
+          }
         } else {
           errBox.textContent = "Falsche PIN.";
           pin = ""; refreshDots();
@@ -507,6 +512,60 @@ function renderPinPad(container, ctx) {
     keys.appendChild(b);
   });
   container.appendChild(box);
+}
+
+async function goToLocationPicker() {
+  if (!rooms.length) {
+    const snap = await db.collection("rooms").orderBy("name").get();
+    rooms = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  state.screen = "locationPicker";
+  render();
+}
+
+function renderLocationPicker() {
+  let lastId = null;
+  try { lastId = localStorage.getItem("kr_last_standort_" + currentUser.role); } catch (e) {}
+  const wrap = el(`
+    <div class="min-h-screen flex items-center justify-center p-6">
+      <div class="w-full max-w-sm fade-in">
+        <div class="text-center mb-6">
+          <div class="text-xl font-semibold display">Wo bist du gerade?</div>
+          <div class="text-sm mt-1" style="color:var(--text-muted)">${escapeHtml(currentUser.name)} · ${escapeHtml(ROLES[currentUser.role].label)}</div>
+        </div>
+        <div id="loc-list" class="space-y-4 max-h-[70vh] overflow-y-auto scrollbar-thin"></div>
+      </div>
+    </div>`);
+  const list = wrap.querySelector("#loc-list");
+  if (!rooms.length) {
+    list.appendChild(el(`<div class="card p-6 text-center text-sm" style="color:var(--text-muted)">Noch keine Standorte angelegt. Ein Admin muss zuerst welche hinzufügen.</div>`));
+  }
+  ["TBG", "TCA"].forEach(cat => {
+    const catRooms = rooms.filter(r => r.category === cat);
+    if (!catRooms.length) return;
+    const group = el(`<div></div>`);
+    group.appendChild(el(`<div class="text-xs font-medium mb-2 px-1" style="color:var(--text-muted)">${escapeHtml(CATEGORY_LABELS[cat])}</div>`));
+    const rows = el(`<div class="space-y-2"></div>`);
+    catRooms.forEach(r => {
+      const isLast = r.id === lastId;
+      const btn = el(`
+        <button class="card w-full p-4 text-left flex items-center justify-between" style="${isLast ? 'border-color:var(--accent)' : ''}">
+          <span class="text-sm font-medium">${escapeHtml(r.name)}</span>
+          ${isLast ? '<span class="text-xs" style="color:var(--accent)">zuletzt</span>' : ''}
+        </button>`);
+      btn.addEventListener("click", async () => {
+        state.currentStandortId = r.id;
+        state.repairRoomId = null;
+        state.orderRoomId = null;
+        try { localStorage.setItem("kr_last_standort_" + currentUser.role, r.id); } catch (e) {}
+        await goToApp();
+      });
+      rows.appendChild(btn);
+    });
+    group.appendChild(rows);
+    list.appendChild(group);
+  });
+  return wrap;
 }
 
 async function goToApp() {
@@ -526,6 +585,7 @@ async function goToApp() {
 function logout() {
   clearSession();
   currentUser = null;
+  state.currentStandortId = null;
   if (roomsUnsub) { roomsUnsub(); roomsUnsub = null; }
   if (repairsUnsub) { repairsUnsub(); repairsUnsub = null; }
   if (ordersUnsub) { ordersUnsub(); ordersUnsub = null; }
@@ -586,9 +646,9 @@ function renderAppShell() {
       state.currentSection = item.key;
       state.openRoomId = null;
       state.openRepairId = null;
-      if (item.key !== "reparaturen") state.repairRoomId = null;
+      if (item.key !== "reparaturen") { state.repairRoomId = null; state.repairShowPicker = false; }
       state.openOrderId = null;
-      if (item.key !== "bestellungen") state.orderRoomId = null;
+      if (item.key !== "bestellungen") { state.orderRoomId = null; state.orderShowPicker = false; }
       if (item.key !== "kalender") state.calSelectedDate = null;
       if (item.key !== "infos") state.infoEditing = false;
       render();
@@ -605,6 +665,18 @@ function renderAppShell() {
   wrap.appendChild(mobileFooter);
 
   const main = wrap.querySelector("#main");
+
+  if (!isAdmin && state.currentStandortId) {
+    const currentRoom = rooms.find(r => r.id === state.currentStandortId);
+    const banner = el(`
+      <div class="flex items-center justify-between gap-2 px-4 md:px-8 py-2 text-sm" style="background:var(--surface-2); border-bottom:1px solid var(--border)">
+        <span>📍 Aktuell: <span class="font-medium">${escapeHtml(currentRoom ? currentRoom.name : "–")}</span></span>
+        <button id="switch-location" class="text-xs font-medium" style="color:var(--accent)">Wechseln</button>
+      </div>`);
+    banner.querySelector("#switch-location").addEventListener("click", () => goToLocationPicker());
+    main.appendChild(banner);
+  }
+
   const section = state.currentSection || "rooms";
   if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
   else if (section === "reparaturen") main.appendChild(renderRepairsSection());
@@ -820,6 +892,9 @@ function openRoomForm(room) {
    REPARATURBOARD
    ========================================================================= */
 function renderRepairsSection() {
+  if (currentUser.role !== "admin" && !state.repairRoomId && state.currentStandortId && !state.repairShowPicker) {
+    state.repairRoomId = state.currentStandortId;
+  }
   if (!state.repairRoomId) return renderRepairRoomPicker();
   return renderRepairBoard();
 }
@@ -846,7 +921,7 @@ function renderRepairRoomPicker() {
         </div>
         <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Meldungen" : openCount + " offen"}</div>
       </button>`);
-    card.addEventListener("click", () => { state.repairRoomId = r.id; render(); });
+    card.addEventListener("click", () => { state.repairRoomId = r.id; state.repairShowPicker = false; render(); });
     grid.appendChild(card);
   });
   wrap.appendChild(grid);
@@ -867,7 +942,7 @@ function renderRepairBoard() {
       <button id="new-ticket-btn" class="btn btn-accent px-3 py-2 text-sm">+ Meldung</button>
     </div>`);
   wrap.appendChild(header);
-  header.querySelector("#back-to-picker").addEventListener("click", () => { state.repairRoomId = null; render(); });
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.repairRoomId = null; state.repairShowPicker = true; render(); });
   header.querySelector("#new-ticket-btn").addEventListener("click", () => openTicketForm(room.id));
 
   const roomTickets = repairs.filter(t => t.roomId === room.id);
@@ -929,7 +1004,8 @@ function renderTicketCard(t) {
 }
 
 function openTicketForm(roomId) {
-  const title = prompt("Kurzer Titel der Meldung:");
+  const room = rooms.find(r => r.id === roomId);
+  const title = prompt(`Meldung für "${room ? room.name : "?"}" – kurzer Titel:`);
   if (!title || !title.trim()) return;
   const description = prompt("Beschreibung (optional):") || "";
   db.collection("repairs").add({
@@ -1063,6 +1139,9 @@ function renderRepairDetail() {
    BESTELLUNGEN
    ========================================================================= */
 function renderOrdersSection() {
+  if (currentUser.role !== "admin" && !state.orderRoomId && state.currentStandortId && !state.orderShowPicker) {
+    state.orderRoomId = state.currentStandortId;
+  }
   if (!state.orderRoomId) return renderOrderRoomPicker();
   return renderOrderBoard();
 }
@@ -1089,7 +1168,7 @@ function renderOrderRoomPicker() {
         </div>
         <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Bestellungen" : openCount + " offen"}</div>
       </button>`);
-    card.addEventListener("click", () => { state.orderRoomId = r.id; render(); });
+    card.addEventListener("click", () => { state.orderRoomId = r.id; state.orderShowPicker = false; render(); });
     grid.appendChild(card);
   });
   wrap.appendChild(grid);
@@ -1110,7 +1189,7 @@ function renderOrderBoard() {
       <button id="new-order-btn" class="btn btn-accent px-3 py-2 text-sm">+ Bestellung</button>
     </div>`);
   wrap.appendChild(header);
-  header.querySelector("#back-to-picker").addEventListener("click", () => { state.orderRoomId = null; render(); });
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.orderRoomId = null; state.orderShowPicker = true; render(); });
   header.querySelector("#new-order-btn").addEventListener("click", () => openOrderForm(room.id));
 
   const roomOrders = orders.filter(o => o.roomId === room.id);
@@ -1171,7 +1250,8 @@ function renderOrderCard(o) {
 }
 
 function openOrderForm(roomId) {
-  const title = prompt("Was soll bestellt werden?");
+  const room = rooms.find(r => r.id === roomId);
+  const title = prompt(`Bestellung für "${room ? room.name : "?"}" – was soll bestellt werden?`);
   if (!title || !title.trim()) return;
   const quantity = prompt("Menge (optional):") || "";
   db.collection("orders").add({
@@ -1899,7 +1979,12 @@ async function boot() {
     const stillAdmin = adminUsers.find(u => u.id === session.id);
     if (stillAdmin) { currentUser = { id: stillAdmin.id, name: stillAdmin.name, role: "admin" }; await goToApp(); return; }
   } else if (session && ROLES[session.role]) {
-    currentUser = session; await goToApp(); return;
+    currentUser = session;
+    let lastId = null;
+    try { lastId = localStorage.getItem("kr_last_standort_" + session.role); } catch (e) {}
+    if (lastId) { state.currentStandortId = lastId; await goToApp(); return; }
+    await goToLocationPicker();
+    return;
   }
   state.screen = "login";
   render();
