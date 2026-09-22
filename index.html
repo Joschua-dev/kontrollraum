@@ -92,6 +92,10 @@
   input, select, textarea {
     background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
   }
+  input[type="checkbox"] {
+    appearance: auto; -webkit-appearance: checkbox; background: none; border: none; border-radius: 0;
+    width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0;
+  }
   input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
@@ -1463,6 +1467,7 @@ function renderPinRow(p) {
    KALENDER
    ========================================================================= */
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const WEEKDAY_LABELS_LONG = ["Montags", "Dienstags", "Mittwochs", "Donnerstags", "Freitags", "Samstags", "Sonntags"];
 const MONTH_LABELS = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
 
 function pad2(n) { return n < 10 ? "0" + n : "" + n; }
@@ -1608,6 +1613,44 @@ function renderCalendarSection(isAdmin) {
       <div class="text-sm" style="color:var(--text-muted)">${isAdmin ? "Du kannst Einträge bearbeiten" : "Nur Admins können Einträge bearbeiten"}</div>
     </div>`));
 
+  if (isAdmin) {
+    const quickAddBtn = el(`<button id="quick-add-event" class="btn btn-accent px-3 py-2 text-sm mb-4">+ Termin / Abwesenheit</button>`);
+    const quickForm = el(`<div id="quick-add-form" class="hidden card p-4 mb-4"></div>`);
+    wrap.appendChild(quickAddBtn);
+    wrap.appendChild(quickForm);
+    quickAddBtn.addEventListener("click", () => {
+      quickForm.classList.toggle("hidden");
+      if (quickForm.classList.contains("hidden")) return;
+      const adminNames = adminUsers.map(u => u.name);
+      quickForm.innerHTML = `
+        <div class="text-sm font-medium mb-3">Neuer Termin / Abwesenheit</div>
+        <div class="grid sm:grid-cols-2 gap-2 mb-2">
+          <input id="qf-date" type="date" class="px-2 py-1.5 text-sm" value="${new Date().toISOString().slice(0,10)}">
+          <select id="qf-type" class="px-2 py-1.5 text-sm">
+            <option value="event">Veranstaltung</option>
+            <option value="absence">Abwesenheit</option>
+          </select>
+        </div>
+        <input id="qf-title" type="text" placeholder="Titel (z.B. Messe, Urlaub)" class="w-full px-2 py-1.5 text-sm mb-2">
+        <input id="qf-person" type="text" placeholder="Person (bei Abwesenheit)" list="admin-names-list" class="w-full px-2 py-1.5 text-sm mb-2">
+        <datalist id="admin-names-list">${adminNames.map(n => `<option value="${escapeHtml(n)}">`).join("")}</datalist>
+        <input id="qf-notes" type="text" placeholder="Notiz (optional)" class="w-full px-2 py-1.5 text-sm mb-3">
+        <button id="qf-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>`;
+      quickForm.querySelector("#qf-save").addEventListener("click", async () => {
+        const title = quickForm.querySelector("#qf-title").value.trim();
+        const date = quickForm.querySelector("#qf-date").value;
+        if (!title || !date) return;
+        await db.collection("calendarEvents").add({
+          title, date, type: quickForm.querySelector("#qf-type").value,
+          person: quickForm.querySelector("#qf-person").value.trim(),
+          notes: quickForm.querySelector("#qf-notes").value.trim(),
+          createdBy: getAuthorName(), createdAt: Date.now()
+        });
+        quickForm.classList.add("hidden");
+      });
+    });
+  }
+
   const recBox = el(`<div class="card p-4 mb-6"></div>`);
   const recHeader = el(`
     <div class="flex items-center justify-between mb-3">
@@ -1621,7 +1664,7 @@ function renderCalendarSection(isAdmin) {
   calRecurring.slice().sort((a,b) => a.weekday - b.weekday).forEach(r => {
     const row = el(`
       <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
-        <div><span class="font-medium">${WEEKDAY_LABELS[r.weekday]}s</span> · ${escapeHtml(r.title)}${r.toPinboard ? ' 📌' : ''}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>
+        <div><span class="font-medium">${WEEKDAY_LABELS_LONG[r.weekday]}</span> · ${escapeHtml(r.title)}${r.toPinboard ? ' 📌' : ''}${r.notes ? ` <span style="color:var(--text-muted)">– ${escapeHtml(r.notes)}</span>` : ""}</div>
         ${isAdmin ? `<button class="text-xs" style="color:var(--danger)">Löschen</button>` : ""}
       </div>`);
     if (isAdmin) row.querySelector("button").addEventListener("click", async () => {
@@ -1640,7 +1683,7 @@ function renderCalendarSection(isAdmin) {
         <div class="grid sm:grid-cols-3 gap-2 mb-2">
           <input id="rf-title" type="text" placeholder="Titel" class="px-2 py-1.5 text-sm sm:col-span-1">
           <select id="rf-weekday" class="px-2 py-1.5 text-sm">
-            ${WEEKDAY_LABELS.map((w,i) => `<option value="${i}">${w}s</option>`).join("")}
+            ${WEEKDAY_LABELS_LONG.map((w,i) => `<option value="${i}">${w}</option>`).join("")}
           </select>
           <input id="rf-notes" type="text" placeholder="Notiz (optional)" class="px-2 py-1.5 text-sm">
         </div>
@@ -1788,7 +1831,8 @@ function renderCalendarDayDetail(isAdmin) {
             <option value="absence">Abwesenheit</option>
           </select>
           <input id="df-title" type="text" placeholder="Titel" class="w-full px-2 py-1.5 text-sm mb-2">
-          <input id="df-person" type="text" placeholder="Person (nur bei Abwesenheit)" class="w-full px-2 py-1.5 text-sm mb-2">
+          <input id="df-person" type="text" placeholder="Person (nur bei Abwesenheit)" list="admin-names-list-day" class="w-full px-2 py-1.5 text-sm mb-2">
+          <datalist id="admin-names-list-day">${adminUsers.map(u => `<option value="${escapeHtml(u.name)}">`).join("")}</datalist>
           <input id="df-notes" type="text" placeholder="Notiz (optional)" class="w-full px-2 py-1.5 text-sm mb-2">
           <button id="df-save" class="btn btn-accent px-3 py-1.5 text-xs">Speichern</button>
         </div>`;
