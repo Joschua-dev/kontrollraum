@@ -409,6 +409,14 @@ function getChecklistClosingItems(category) {
 
 function checklistDocId(roomId, date) { return `${roomId}_${date}`; }
 
+function getChecklistScope(room) {
+  if (room.category === "TBG" && room.standort && room.standort.trim()) {
+    const norm = room.standort.trim().toLowerCase().replace(/\s+/g, "_");
+    return { key: "grp_" + norm, label: room.standort.trim(), shared: true };
+  }
+  return { key: room.id, label: room.name, shared: false };
+}
+
 function subscribeChecklist(roomId, date, cb) {
   const key = checklistDocId(roomId, date);
   if (key === currentChecklistKey) return;
@@ -1206,6 +1214,11 @@ function renderRoomForm(room) {
           </select>
         </div>
         <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Standort-Name (optional)</div>
+          <input id="f-standort" type="text" class="w-full px-3 py-2 text-sm" placeholder="z.B. Hamburg-Mitte" value="${v("standort")}">
+          <div class="text-xs mt-1" style="color:var(--text-muted)">Räume mit demselben Standort-Namen teilen sich bei TBG eine gemeinsame Feierabend-Checkliste.</div>
+        </div>
+        <div>
           <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Thema / Story</div>
           <textarea id="f-theme" rows="2" class="w-full px-3 py-2 text-sm">${v("theme")}</textarea>
         </div>
@@ -1310,6 +1323,7 @@ function renderRoomForm(room) {
       name: form.querySelector("#f-name").value.trim(),
       icon: form.querySelector("#f-icon").value.trim(),
       category: form.querySelector("#f-category").value,
+      standort: form.querySelector("#f-standort").value.trim(),
       faq: faqDraft.filter(f => (f.q && f.q.trim()) || (f.a && f.a.trim())),
       emergencyInfo: form.querySelector("#f-emergencyInfo").value.trim()
     };
@@ -1897,17 +1911,20 @@ function renderChecklistBoard() {
 
   runChecklistCleanup();
 
+  const scope = getChecklistScope(room);
+
   if (!state.checklistDate) state.checklistDate = isoOf(new Date());
   const date = state.checklistDate;
   const todayIso = isoOf(new Date());
   const minDate = isoOf(new Date(Date.now() - 13 * 86400000));
 
-  subscribeChecklist(room.id, date, render);
+  subscribeChecklist(scope.key, date, render);
 
   const header = el(`
     <div class="mb-4">
       <button id="back-to-picker" class="text-xs mb-1" style="color:var(--text-muted)">← Alle Standorte</button>
-      <h1 class="text-xl font-semibold">Checkliste · ${escapeHtml(room.name)}</h1>
+      <h1 class="text-xl font-semibold">Checkliste · ${escapeHtml(scope.label)}</h1>
+      ${scope.shared ? `<div class="text-xs mt-0.5" style="color:var(--text-muted)">Gemeinsame Checkliste für alle Räume mit diesem Standort-Namen</div>` : ""}
     </div>`);
   wrap.appendChild(header);
   header.querySelector("#back-to-picker").addEventListener("click", () => { state.checklistRoomId = null; state.checklistShowPicker = true; render(); });
@@ -1933,7 +1950,7 @@ function renderChecklistBoard() {
 
   const list = el(`<div class="space-y-2 mb-4"></div>`);
   items.forEach((text, i) => {
-    list.appendChild(renderChecklistRow(room, date, "entries", i, text, entries[i]));
+    list.appendChild(renderChecklistRow(scope, room.category, date, "entries", i, text, entries[i]));
   });
   wrap.appendChild(list);
 
@@ -1944,8 +1961,8 @@ function renderChecklistBoard() {
         <span class="text-sm font-medium">Ich schließe heute als Letzte(r) in der Location</span>
       </label>`);
     toggleRow.querySelector("#closing-toggle").addEventListener("change", async (e) => {
-      await db.collection("checklists").doc(checklistDocId(room.id, date)).set({
-        roomId: room.id, date, category: room.category, closingEnabled: e.target.checked
+      await db.collection("checklists").doc(checklistDocId(scope.key, date)).set({
+        scopeKey: scope.key, scopeLabel: scope.label, date, category: room.category, closingEnabled: e.target.checked
       }, { merge: true });
     });
     wrap.appendChild(toggleRow);
@@ -1954,7 +1971,7 @@ function renderChecklistBoard() {
       const closingBox = el(`<div class="space-y-2"></div>`);
       closingBox.appendChild(el(`<div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Zusätzlich für die allerletzte Schließung:</div>`));
       closingItems.forEach((text, i) => {
-        closingBox.appendChild(renderChecklistRow(room, date, "closingEntries", i, text, closingEntries[i]));
+        closingBox.appendChild(renderChecklistRow(scope, room.category, date, "closingEntries", i, text, closingEntries[i]));
       });
       wrap.appendChild(closingBox);
     }
@@ -1975,7 +1992,7 @@ function renderChecklistBoard() {
   return wrap;
 }
 
-function renderChecklistRow(room, date, field, index, text, entry) {
+function renderChecklistRow(scope, category, date, field, index, text, entry) {
   const checked = entry && entry.checked;
   const row = el(`
     <div class="card p-3 flex items-start gap-3">
@@ -1987,9 +2004,9 @@ function renderChecklistRow(room, date, field, index, text, entry) {
     </div>`);
   row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
     const isChecked = e.target.checked;
-    const payload = { roomId: room.id, date, category: room.category };
+    const payload = { scopeKey: scope.key, scopeLabel: scope.label, date, category };
     payload[field] = { [index]: isChecked ? { checked: true, by: getAuthorName(), at: Date.now() } : { checked: false } };
-    await db.collection("checklists").doc(checklistDocId(room.id, date)).set(payload, { merge: true });
+    await db.collection("checklists").doc(checklistDocId(scope.key, date)).set(payload, { merge: true });
     if (isChecked) triggerSuccessPulse();
   });
   return row;
