@@ -157,7 +157,7 @@ const FIREBASE_CONFIG = {
 
 const ROLES = {
   admin:       { label: "Admin",       shared: false },
-  gm:          { label: "GM",          shared: true },
+  gm:          { label: "GM",          shared: false },
   construction:{ label: "Construction",shared: true },
   technik:     { label: "Technik",     shared: true }
 };
@@ -187,7 +187,15 @@ let infoSections = [];
 let infoUnsub = null;
 let orderTemplates = [];
 let orderTemplatesUnsub = null;
-let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, repairShowPicker: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, orderShowPicker: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false, currentStandortId: null };
+let checklistTemplates = {};
+let checklistTemplatesUnsub = null;
+let currentChecklist = null;
+let currentChecklistUnsub = null;
+let currentChecklistKey = null;
+let checklistCleanupDone = false;
+let logbook = [];
+let logbookUnsub = null;
+let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: false, settingsTab: "rooms", repairRoomId: null, openRepairId: null, showRepairArchive: false, repairShowPicker: false, orderRoomId: null, openOrderId: null, showOrderArchive: false, orderShowPicker: false, checklistRoomId: null, checklistShowPicker: false, checklistDate: null, logbookRoomId: null, logbookShowPicker: false, showLogbookDone: false, showPinDone: false, calMonth: null, calView: "week", calWeekStart: null, calSelectedDate: null, infoEditing: false, currentStandortId: null };
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
@@ -301,6 +309,11 @@ async function fetchAdminUsers() {
   return adminUsers;
 }
 
+async function fetchUsersByRole(role) {
+  const snap = await db.collection("users").where("role", "==", role).get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
 async function fetchRoleAccount(role) {
   const doc = await db.collection("roleAccounts").doc(role).get();
   return doc.exists ? doc.data() : null;
@@ -366,6 +379,62 @@ function subscribeOrderTemplates(cb) {
     orderTemplates = doc.exists ? (doc.data().items || []) : [];
     cb();
   }, err => console.error("order templates sub error", err));
+}
+
+function subscribeChecklistTemplates(cb) {
+  if (checklistTemplatesUnsub) checklistTemplatesUnsub();
+  checklistTemplatesUnsub = db.collection("checklistTemplates").onSnapshot(snap => {
+    const map = {};
+    snap.docs.forEach(d => { map[d.id] = d.data(); });
+    checklistTemplates = map;
+    cb();
+  }, err => console.error("checklist templates sub error", err));
+}
+
+function getChecklistItems(category) {
+  const stored = checklistTemplates[category];
+  return stored && stored.items ? stored.items : DEFAULT_CHECKLIST_ITEMS[category] || [];
+}
+function getChecklistClosingItems(category) {
+  if (category !== "TCA") return [];
+  const stored = checklistTemplates[category];
+  return stored && stored.closingItems ? stored.closingItems : DEFAULT_CLOSING_ITEMS_TCA;
+}
+
+function checklistDocId(roomId, date) { return `${roomId}_${date}`; }
+
+function subscribeChecklist(roomId, date, cb) {
+  const key = checklistDocId(roomId, date);
+  if (key === currentChecklistKey) return;
+  currentChecklistKey = key;
+  if (currentChecklistUnsub) currentChecklistUnsub();
+  currentChecklistUnsub = db.collection("checklists").doc(key).onSnapshot(doc => {
+    currentChecklist = doc.exists ? doc.data() : null;
+    cb();
+  }, err => console.error("checklist sub error", err));
+}
+
+async function runChecklistCleanup() {
+  if (checklistCleanupDone) return;
+  checklistCleanupDone = true;
+  try {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
+    const cutoffIso = isoOf(cutoff);
+    const snap = await db.collection("checklists").where("date", "<", cutoffIso).get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  } catch (e) { console.error("checklist cleanup error", e); }
+}
+
+function subscribeLogbook(cb) {
+  if (logbookUnsub) logbookUnsub();
+  logbookUnsub = db.collection("logbook").orderBy("createdAt", "desc").onSnapshot(snap => {
+    logbook = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cb();
+  }, err => console.error("logbook sub error", err));
 }
 
 async function uploadRepairImage(file) {
@@ -483,18 +552,22 @@ function renderLogin() {
 async function onRoleSelect(roleKey, wrap) {
   const step2 = wrap.querySelector("#login-step2");
   step2.innerHTML = "";
-  if (roleKey === "admin") {
-    if (!adminUsers.length) await fetchAdminUsers();
+  if (!ROLES[roleKey].shared) {
+    const users = roleKey === "admin" ? (adminUsers.length ? adminUsers : await fetchAdminUsers()) : await fetchUsersByRole(roleKey);
     const box = el(`<div class="card p-4 mt-4 fade-in"></div>`);
     const title = el(`<div class="text-xs font-medium mb-3" style="color:var(--text-muted)">Wer bist du?</div>`);
     box.appendChild(title);
-    const list = el(`<div class="grid grid-cols-2 gap-2"></div>`);
-    adminUsers.forEach(u => {
-      const b = el(`<button class="btn btn-ghost py-2 text-sm">${escapeHtml(u.name)}</button>`);
-      b.addEventListener("click", () => renderPinPad(step2, { mode: "admin", user: u }));
-      list.appendChild(b);
-    });
-    box.appendChild(list);
+    if (!users.length) {
+      box.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch niemand eingerichtet. Ein Admin kann das in den Einstellungen tun.</div>`));
+    } else {
+      const list = el(`<div class="grid grid-cols-2 gap-2"></div>`);
+      users.forEach(u => {
+        const b = el(`<button class="btn btn-ghost py-2 text-sm">${escapeHtml(u.name)}</button>`);
+        b.addEventListener("click", () => renderPinPad(step2, { mode: "personal", role: roleKey, user: u }));
+        list.appendChild(b);
+      });
+      box.appendChild(list);
+    }
     step2.appendChild(box);
   } else {
     const account = await fetchRoleAccount(roleKey);
@@ -502,18 +575,18 @@ async function onRoleSelect(roleKey, wrap) {
       step2.appendChild(el(`<div class="text-xs mt-4" style="color:var(--danger)">Für diese Rolle ist noch keine PIN eingerichtet. Ein Admin kann das in den Einstellungen tun.</div>`));
       return;
     }
-    renderPinPad(step2, { mode: "role", role: roleKey, account });
+    renderPinPad(step2, { mode: "shared", role: roleKey, account });
   }
 }
 
 function renderPinPad(container, ctx) {
   container.innerHTML = "";
   let pin = "";
-  const label = ctx.mode === "admin" ? ctx.user.name : ROLES[ctx.role].label;
+  const label = ctx.mode === "personal" ? ctx.user.name : ROLES[ctx.role].label;
   const box = el(`
     <div class="card p-5 mt-4 fade-in">
       <div class="text-sm font-medium mb-3">PIN für ${escapeHtml(label)}</div>
-      <div id="pin-dots" class="flex gap-2 justify-center mb-4"></div>
+      <div id="pin-dots" class="flex gap-2 justify-center mb-4" style="min-height:14px"></div>
       <div id="pin-error" class="text-xs text-center mb-2" style="color:var(--danger); min-height:14px"></div>
       <div id="pin-keys" class="grid grid-cols-3 gap-2"></div>
     </div>`);
@@ -521,8 +594,8 @@ function renderPinPad(container, ctx) {
   const keys = box.querySelector("#pin-keys");
   function refreshDots() {
     dots.innerHTML = "";
-    for (let i = 0; i < 6; i++) {
-      dots.appendChild(el(`<div class="pin-dot${i < pin.length ? " filled" : ""}"></div>`));
+    for (let i = 0; i < pin.length; i++) {
+      dots.appendChild(el(`<div class="pin-dot filled"></div>`));
     }
   }
   refreshDots();
@@ -533,9 +606,10 @@ function renderPinPad(container, ctx) {
       const errBox = box.querySelector("#pin-error");
       if (k === "⌫") { pin = pin.slice(0, -1); refreshDots(); return; }
       if (k === "OK") {
+        if (pin.length < 4) { errBox.textContent = "PIN muss mindestens 4 Ziffern haben."; return; }
         const hash = simpleHash(pin);
         let expected, userObj;
-        if (ctx.mode === "admin") { expected = ctx.user.pin; userObj = { id: ctx.user.id, name: ctx.user.name, role: "admin" }; }
+        if (ctx.mode === "personal") { expected = ctx.user.pin; userObj = { id: ctx.user.id, name: ctx.user.name, role: ctx.role }; }
         else { expected = ctx.account.pin; userObj = { id: ctx.role, name: ROLES[ctx.role].label, role: ctx.role }; }
         if (hash === expected) {
           currentUser = userObj;
@@ -552,7 +626,6 @@ function renderPinPad(container, ctx) {
         return;
       }
       if (pin.length < 6) { pin += k; refreshDots(); }
-      if (pin.length >= 4 && k !== "⌫") { /* allow manual OK */ }
     });
     keys.appendChild(b);
   });
@@ -630,6 +703,8 @@ async function goToApp() {
   subscribeCalendar(render);
   subscribeInfo(render);
   subscribeOrderTemplates(render);
+  subscribeChecklistTemplates(render);
+  subscribeLogbook(render);
   render();
 }
 
@@ -645,6 +720,10 @@ function logout() {
   if (calRecurringUnsub) { calRecurringUnsub(); calRecurringUnsub = null; }
   if (infoUnsub) { infoUnsub(); infoUnsub = null; }
   if (orderTemplatesUnsub) { orderTemplatesUnsub(); orderTemplatesUnsub = null; }
+  if (checklistTemplatesUnsub) { checklistTemplatesUnsub(); checklistTemplatesUnsub = null; }
+  if (logbookUnsub) { logbookUnsub(); logbookUnsub = null; }
+  if (currentChecklistUnsub) { currentChecklistUnsub(); currentChecklistUnsub = null; }
+  currentChecklistKey = null;
   state.screen = "login";
   render();
 }
@@ -656,6 +735,8 @@ const NAV_ITEMS = [
   { key: "rooms", label: "Räume", ready: true },
   { key: "reparaturen", label: "Reparaturen", ready: true },
   { key: "bestellungen", label: "Bestellungen", ready: true },
+  { key: "checkliste", label: "Checkliste", ready: true },
+  { key: "logbuch", label: "Logbuch", ready: true },
   { key: "pinnwand", label: "Pinnwand", ready: true },
   { key: "kalender", label: "Kalender", ready: true },
   { key: "infos", label: "Infos", ready: true }
@@ -695,6 +776,10 @@ function renderAppShell() {
         : (state.currentStandortId ? orders.filter(o => o.roomId === state.currentStandortId && o.status !== "erledigt").length : 0);
     }
     if (key === "pinnwand") return pinItems.filter(p => !p.done).length;
+    if (key === "logbuch") {
+      return isAdmin ? logbook.filter(l => !l.done).length
+        : (state.currentStandortId ? logbook.filter(l => l.roomId === state.currentStandortId && !l.done).length : 0);
+    }
     return 0;
   }
   const navList = (isAdmin ? [{ key: "dashboard", label: "Übersicht", ready: true }] : [])
@@ -718,6 +803,8 @@ function renderAppShell() {
       if (item.key !== "reparaturen") { state.repairRoomId = null; state.repairShowPicker = false; }
       state.openOrderId = null;
       if (item.key !== "bestellungen") { state.orderRoomId = null; state.orderShowPicker = false; }
+      if (item.key !== "checkliste") { state.checklistRoomId = null; state.checklistShowPicker = false; state.checklistDate = null; currentChecklistKey = null; if (currentChecklistUnsub) { currentChecklistUnsub(); currentChecklistUnsub = null; } currentChecklist = null; }
+      if (item.key !== "logbuch") { state.logbookRoomId = null; state.logbookShowPicker = false; }
       if (item.key !== "kalender") state.calSelectedDate = null;
       if (item.key !== "infos") state.infoEditing = false;
       render();
@@ -756,6 +843,8 @@ function renderAppShell() {
   else if (section === "rooms") main.appendChild(renderRoomsSection(isAdmin));
   else if (section === "reparaturen") main.appendChild(renderRepairsSection());
   else if (section === "bestellungen") main.appendChild(renderOrdersSection());
+  else if (section === "checkliste") main.appendChild(renderChecklisteSection());
+  else if (section === "logbuch") main.appendChild(renderLogbuchSection());
   else if (section === "pinnwand") main.appendChild(renderPinboardSection());
   else if (section === "kalender") main.appendChild(renderCalendarSection(isAdmin));
   else if (section === "infos") main.appendChild(renderInfoSection(isAdmin));
@@ -892,13 +981,15 @@ function renderRoomsSection(isAdmin) {
   } else {
     const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
     filtered.forEach(r => {
+      const subtitleBits = [r.difficulty, r.duration, r.playerCount].filter(Boolean);
+      const subtitle = subtitleBits.length ? subtitleBits.join(" · ") : "Noch keine Details hinterlegt";
       const card = el(`
         <button class="card p-4 text-left hover:opacity-90">
           <div class="flex items-start justify-between mb-2">
-            <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
+            <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}${r.emergencyInfo ? ' <span title="Notfall-Infos hinterlegt">🚨</span>' : ""}</div>
             <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
           </div>
-          <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(r.address || "Keine Adresse hinterlegt")}</div>
+          <div class="text-xs" style="color:var(--text-muted)">${escapeHtml(subtitle)}</div>
         </button>`);
       card.addEventListener("click", () => { state.openRoomId = r.id; state.roomEdit = false; render(); });
       grid.appendChild(card);
@@ -914,12 +1005,45 @@ function renderRoomsSection(isAdmin) {
 }
 
 const ROOM_FIELDS = [
-  { key: "address", label: "Adresse" },
-  { key: "phone", label: "Telefon" },
-  { key: "contact", label: "Ansprechpartner" },
-  { key: "hours", label: "Öffnungszeiten" },
+  { key: "theme", label: "Thema / Story" },
+  { key: "playerCount", label: "Spieleranzahl" },
+  { key: "difficulty", label: "Schwierigkeitsgrad" },
+  { key: "duration", label: "Spielzeit / Dauer" },
+  { key: "resetGuide", label: "Reset-Anleitung" },
+  { key: "techContact", label: "Technik-Kontakt" },
   { key: "access", label: "Zugänge & Codes" },
   { key: "notes", label: "Besonderheiten / Notizen" }
+];
+
+const DEFAULT_CHECKLIST_ITEMS = {
+  TBG: [
+    "Badezimmer Check und grobes Aufräumen",
+    "Freifläche aufräumen",
+    "Spielleitung aufräumen",
+    "Getränke auffüllen",
+    "Batterien aufladen",
+    "Check, ob alle Fotos hochgeladen sind",
+    "Alle Räume aufräumen und Türen offen lassen (Büro geschlossen halten und Getränkelager auch!)",
+    "Müll raus (Küche, Bäder, Freifläche, GM-Raum)",
+    "Schild von unten hoch",
+    "Licht aus und Strom überall aus",
+    "Lüftungen aus (Zukunft Sonderfall)"
+  ],
+  TCA: [
+    "Badezimmer Check und grobes Aufräumen",
+    "Lobby aufräumen + Kassenbuch Check",
+    "Spielleitung aufräumen",
+    "Getränke auffüllen",
+    "Batterien, Akkus etc. aufladen am Strom",
+    "Check, ob alle Fotos von euch hochgeladen sind",
+    "Mission aufräumen und Türen offen lassen",
+    "Aufenthaltsraum checken und Bestände melden",
+    "Licht überall aus in der Mission"
+  ]
+};
+const DEFAULT_CLOSING_ITEMS_TCA = [
+  "Kassenbuch abschließen (maximal 15min)",
+  "Licht überall aus und Agency abschließen"
 ];
 
 function renderRoomDetail(isAdmin) {
@@ -945,6 +1069,23 @@ function renderRoomDetail(isAdmin) {
 
   const body = overlay.querySelector("#detail-body");
   if (!state.roomEdit) {
+    if (room.emergencyInfo) {
+      const emergBox = el(`
+        <div class="mb-4 rounded-lg overflow-hidden" style="border:1px solid var(--danger)">
+          <button id="emerg-toggle" class="w-full flex items-center justify-between px-3 py-2 text-sm font-semibold" style="background:var(--danger-soft); color:var(--danger)">
+            <span>🚨 Im Notfall</span>
+            <span id="emerg-arrow">▾</span>
+          </button>
+          <div id="emerg-body" class="px-3 py-2 text-sm whitespace-pre-wrap" style="background:var(--surface)">${escapeHtml(room.emergencyInfo)}</div>
+        </div>`);
+      body.appendChild(emergBox);
+      emergBox.querySelector("#emerg-toggle").addEventListener("click", () => {
+        const b = emergBox.querySelector("#emerg-body");
+        const hidden = b.style.display === "none";
+        b.style.display = hidden ? "block" : "none";
+        emergBox.querySelector("#emerg-arrow").textContent = hidden ? "▾" : "▸";
+      });
+    }
     ROOM_FIELDS.forEach(f => {
       const val = room[f.key];
       body.appendChild(el(`
@@ -953,6 +1094,16 @@ function renderRoomDetail(isAdmin) {
           <div class="text-sm whitespace-pre-wrap">${val ? escapeHtml(val) : '<span style="color:var(--text-muted)">—</span>'}</div>
         </div>`));
     });
+    if (room.faq && room.faq.length) {
+      body.appendChild(el(`<div class="text-sm font-medium mb-2 mt-2 pt-3 border-t" style="border-color:var(--border)">Häufige Fragen</div>`));
+      room.faq.forEach(item => {
+        body.appendChild(el(`
+          <div class="mb-3">
+            <div class="text-sm font-medium">${escapeHtml(item.q)}</div>
+            <div class="text-sm mt-0.5 whitespace-pre-wrap" style="color:var(--text-muted)">${escapeHtml(item.a)}</div>
+          </div>`));
+      });
+    }
   } else {
     body.appendChild(renderRoomForm(room));
   }
@@ -994,25 +1145,70 @@ function renderRoomForm(room) {
       </select>
     </div>`);
   form.appendChild(catRow);
+  const FIELD_PLACEHOLDERS = {
+    playerCount: "z.B. 2–6 Spieler",
+    difficulty: "z.B. Mittel, 3/5",
+    duration: "z.B. 60 Minuten",
+    techContact: "z.B. Name, Telefonnummer"
+  };
   ROOM_FIELDS.forEach(f => {
-    const isArea = f.key === "access" || f.key === "notes";
+    const isArea = ["theme", "resetGuide", "access", "notes"].includes(f.key);
     const val = room ? (room[f.key] || "") : "";
+    const placeholder = FIELD_PLACEHOLDERS[f.key] || "";
     const field = el(`
       <div class="mb-3">
         <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
         ${isArea
-          ? `<textarea id="f-${f.key}" rows="3" class="w-full px-3 py-2 text-sm">${escapeHtml(val)}</textarea>`
-          : `<input id="f-${f.key}" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(val)}">`}
+          ? `<textarea id="f-${f.key}" rows="3" class="w-full px-3 py-2 text-sm" placeholder="${escapeHtml(placeholder)}">${escapeHtml(val)}</textarea>`
+          : `<input id="f-${f.key}" type="text" class="w-full px-3 py-2 text-sm" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(val)}">`}
       </div>`);
     form.appendChild(field);
   });
+
+  const emergRow = el(`
+    <div class="mb-4 p-3 rounded-lg" style="border:1px solid var(--danger)">
+      <div class="text-xs font-medium mb-1" style="color:var(--danger)">🚨 Notfall-Infos (Notausgang, Not-Entriegelung, wen anrufen)</div>
+      <textarea id="f-emergencyInfo" rows="3" class="w-full px-3 py-2 text-sm" placeholder="z.B. Notausgang links neben Eingang, Not-Entriegelung unter der Theke, im Ernstfall Alex anrufen: 0170...">${escapeHtml(room ? (room.emergencyInfo || "") : "")}</textarea>
+    </div>`);
+  form.appendChild(emergRow);
+
+  const faqDraft = room && room.faq ? room.faq.map(f => ({ ...f })) : [];
+  const faqBox = el(`<div class="mb-4 pt-3 border-t" style="border-color:var(--border)"></div>`);
+  faqBox.appendChild(el(`<div class="text-xs font-medium mb-2" style="color:var(--text-muted)">Häufige Fragen (FAQ)</div>`));
+  const faqList = el(`<div class="space-y-2 mb-2"></div>`);
+  function renderFaqList() {
+    faqList.innerHTML = "";
+    faqDraft.forEach((item, i) => {
+      const row = el(`
+        <div class="card p-3">
+          <div class="flex items-center justify-between gap-2 mb-1.5">
+            <input type="text" class="flex-1 px-2 py-1.5 text-sm faq-q" placeholder="Frage" value="${escapeHtml(item.q || "")}">
+            <button class="text-xs shrink-0 faq-del" style="color:var(--danger)">Entfernen</button>
+          </div>
+          <textarea rows="2" class="w-full px-2 py-1.5 text-sm faq-a" placeholder="Antwort">${escapeHtml(item.a || "")}</textarea>
+        </div>`);
+      row.querySelector(".faq-q").addEventListener("input", (e) => { faqDraft[i].q = e.target.value; });
+      row.querySelector(".faq-a").addEventListener("input", (e) => { faqDraft[i].a = e.target.value; });
+      row.querySelector(".faq-del").addEventListener("click", () => { faqDraft.splice(i, 1); renderFaqList(); });
+      faqList.appendChild(row);
+    });
+  }
+  renderFaqList();
+  faqBox.appendChild(faqList);
+  const addFaqBtn = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ Frage hinzufügen</button>`);
+  addFaqBtn.addEventListener("click", () => { faqDraft.push({ q: "", a: "" }); renderFaqList(); });
+  faqBox.appendChild(addFaqBtn);
+  form.appendChild(faqBox);
+
   const saveBtn = el(`<button id="save-room" class="btn btn-accent w-full py-2 text-sm mt-2">Speichern</button>`);
   form.appendChild(saveBtn);
   saveBtn.addEventListener("click", async () => {
     const data = {
       name: form.querySelector("#f-name").value.trim(),
       icon: form.querySelector("#f-icon").value.trim(),
-      category: form.querySelector("#f-category").value
+      category: form.querySelector("#f-category").value,
+      faq: faqDraft.filter(f => (f.q && f.q.trim()) || (f.a && f.a.trim())),
+      emergencyInfo: form.querySelector("#f-emergencyInfo").value.trim()
     };
     ROOM_FIELDS.forEach(f => { data[f.key] = form.querySelector(`#f-${f.key}`).value.trim(); });
     if (!data.name) { alert("Bitte einen Namen angeben."); return; }
@@ -1553,6 +1749,329 @@ function renderOrderDetail() {
   });
 
   return overlay;
+}
+
+/* =========================================================================
+   CHECKLISTE (Feierabend-Checkliste)
+   ========================================================================= */
+function renderChecklisteSection() {
+  if (currentUser.role !== "admin" && !state.checklistRoomId && state.currentStandortId && !state.checklistShowPicker) {
+    state.checklistRoomId = state.currentStandortId;
+  }
+  if (!state.checklistRoomId) return renderChecklistRoomPicker();
+  return renderChecklistBoard();
+}
+
+function renderChecklistRoomPicker() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Checkliste</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Standort wählen</div>
+    </div>`));
+  if (!rooms.length) {
+    wrap.appendChild(el(`<div class="card p-10 text-center text-sm" style="color:var(--text-muted)">Erst müssen Räume angelegt werden (unter "Räume").</div>`));
+    return wrap;
+  }
+  const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
+  rooms.forEach(r => {
+    const card = el(`
+      <button class="card p-4 text-left hover:opacity-90">
+        <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
+        <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()} inline-block mt-1">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+      </button>`);
+    card.addEventListener("click", () => { state.checklistRoomId = r.id; state.checklistShowPicker = false; render(); });
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function renderChecklistBoard() {
+  const room = rooms.find(r => r.id === state.checklistRoomId);
+  const wrap = el(`<div class="p-4 md:p-8 fade-in max-w-2xl"></div>`);
+  if (!room) { state.checklistRoomId = null; return wrap; }
+
+  runChecklistCleanup();
+
+  if (!state.checklistDate) state.checklistDate = isoOf(new Date());
+  const date = state.checklistDate;
+  const todayIso = isoOf(new Date());
+  const minDate = isoOf(new Date(Date.now() - 13 * 86400000));
+
+  subscribeChecklist(room.id, date, render);
+
+  const header = el(`
+    <div class="mb-4">
+      <button id="back-to-picker" class="text-xs mb-1" style="color:var(--text-muted)">← Alle Standorte</button>
+      <h1 class="text-xl font-semibold">Checkliste · ${escapeHtml(room.name)}</h1>
+    </div>`);
+  wrap.appendChild(header);
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.checklistRoomId = null; state.checklistShowPicker = true; render(); });
+
+  const dateNav = el(`
+    <div class="flex items-center justify-between mb-5 card p-2">
+      <button id="date-prev" class="btn btn-ghost px-3 py-1.5 text-sm" ${date <= minDate ? "disabled style=opacity:0.4" : ""}>←</button>
+      <div class="text-sm font-medium">${date === todayIso ? "Heute" : date} <span style="color:var(--text-muted); font-weight:400">${date === todayIso ? `(${date})` : ""}</span></div>
+      <button id="date-next" class="btn btn-ghost px-3 py-1.5 text-sm" ${date >= todayIso ? "disabled style=opacity:0.4" : ""}>→</button>
+    </div>`);
+  if (date > minDate) dateNav.querySelector("#date-prev").addEventListener("click", () => { state.checklistDate = isoOf(new Date(new Date(date).getTime() - 86400000)); render(); });
+  if (date < todayIso) dateNav.querySelector("#date-next").addEventListener("click", () => { state.checklistDate = isoOf(new Date(new Date(date).getTime() + 86400000)); render(); });
+  wrap.appendChild(dateNav);
+
+  const items = getChecklistItems(room.category);
+  const closingItems = getChecklistClosingItems(room.category);
+  const entries = (currentChecklist && currentChecklist.entries) || {};
+  const closingEntries = (currentChecklist && currentChecklist.closingEntries) || {};
+  const closingEnabled = !!(currentChecklist && currentChecklist.closingEnabled);
+
+  const doneCount = items.filter((_, i) => entries[i] && entries[i].checked).length;
+  wrap.appendChild(el(`<div class="text-xs mb-3" style="color:var(--text-muted)">${doneCount} von ${items.length} erledigt</div>`));
+
+  const list = el(`<div class="space-y-2 mb-4"></div>`);
+  items.forEach((text, i) => {
+    list.appendChild(renderChecklistRow(room, date, "entries", i, text, entries[i]));
+  });
+  wrap.appendChild(list);
+
+  if (room.category === "TCA") {
+    const toggleRow = el(`
+      <label class="card p-3 flex items-center gap-3 mb-4" style="cursor:pointer">
+        <input id="closing-toggle" type="checkbox" ${closingEnabled ? "checked" : ""} class="w-4 h-4">
+        <span class="text-sm font-medium">Ich schließe heute als Letzte(r) in der Location</span>
+      </label>`);
+    toggleRow.querySelector("#closing-toggle").addEventListener("change", async (e) => {
+      await db.collection("checklists").doc(checklistDocId(room.id, date)).set({
+        roomId: room.id, date, category: room.category, closingEnabled: e.target.checked
+      }, { merge: true });
+    });
+    wrap.appendChild(toggleRow);
+
+    if (closingEnabled) {
+      const closingBox = el(`<div class="space-y-2"></div>`);
+      closingBox.appendChild(el(`<div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Zusätzlich für die allerletzte Schließung:</div>`));
+      closingItems.forEach((text, i) => {
+        closingBox.appendChild(renderChecklistRow(room, date, "closingEntries", i, text, closingEntries[i]));
+      });
+      wrap.appendChild(closingBox);
+    }
+  }
+
+  if (currentUser.role === "admin") {
+    const manageBtn = el(`<button id="manage-checklist-items" class="text-xs mt-5" style="color:var(--text-muted)">Punkte für ${escapeHtml(CATEGORY_LABELS[room.category])} bearbeiten</button>`);
+    const manageBox = el(`<div id="checklist-manage-box" class="hidden mt-3"></div>`);
+    manageBtn.addEventListener("click", () => {
+      manageBox.classList.toggle("hidden");
+      if (manageBox.classList.contains("hidden")) return;
+      renderChecklistManageBox(manageBox, room.category);
+    });
+    wrap.appendChild(manageBtn);
+    wrap.appendChild(manageBox);
+  }
+
+  return wrap;
+}
+
+function renderChecklistRow(room, date, field, index, text, entry) {
+  const checked = entry && entry.checked;
+  const row = el(`
+    <div class="card p-3 flex items-start gap-3">
+      <input type="checkbox" ${checked ? "checked" : ""} class="w-4 h-4 shrink-0 mt-0.5">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm ${checked ? "line-through" : ""}" style="${checked ? 'color:var(--text-muted)' : ''}">${escapeHtml(text)}</div>
+        ${checked && entry.by ? `<div class="text-xs mt-0.5" style="color:var(--text-muted)">✓ ${escapeHtml(entry.by)}</div>` : ""}
+      </div>
+    </div>`);
+  row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
+    const isChecked = e.target.checked;
+    const payload = { roomId: room.id, date, category: room.category };
+    payload[field] = { [index]: isChecked ? { checked: true, by: getAuthorName(), at: Date.now() } : { checked: false } };
+    await db.collection("checklists").doc(checklistDocId(room.id, date)).set(payload, { merge: true });
+    if (isChecked) triggerSuccessPulse();
+  });
+  return row;
+}
+
+function renderChecklistManageBox(box, category) {
+  box.innerHTML = "";
+  const items = getChecklistItems(category);
+  const list = el(`<div class="card p-3 space-y-2 mb-2"></div>`);
+  items.forEach((text, i) => {
+    const row = el(`
+      <div class="flex items-center justify-between gap-2 text-sm">
+        <span>${escapeHtml(text)}</span>
+        <button class="text-xs shrink-0" style="color:var(--danger)">Entfernen</button>
+      </div>`);
+    row.querySelector("button").addEventListener("click", async () => {
+      const next = items.filter((_, idx) => idx !== i);
+      await db.collection("checklistTemplates").doc(category).set({ items: next }, { merge: true });
+    });
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  const addRow = el(`
+    <div class="flex gap-2">
+      <input id="new-item-input" type="text" placeholder="Neuer Punkt…" class="flex-1 px-2 py-1.5 text-sm">
+      <button id="new-item-add" class="btn btn-accent px-3 py-1.5 text-xs">+ Hinzufügen</button>
+    </div>`);
+  addRow.querySelector("#new-item-add").addEventListener("click", async () => {
+    const val = addRow.querySelector("#new-item-input").value.trim();
+    if (!val) return;
+    const next = items.concat([val]);
+    await db.collection("checklistTemplates").doc(category).set({ items: next }, { merge: true });
+  });
+  box.appendChild(addRow);
+
+  if (category === "TCA") {
+    const closing = getChecklistClosingItems(category);
+    box.appendChild(el(`<div class="text-xs font-medium mt-4 mb-1" style="color:var(--text-muted)">Zusatzpunkte "Letzte Schließung"</div>`));
+    const closingList = el(`<div class="card p-3 space-y-2 mb-2"></div>`);
+    closing.forEach((text, i) => {
+      const row = el(`
+        <div class="flex items-center justify-between gap-2 text-sm">
+          <span>${escapeHtml(text)}</span>
+          <button class="text-xs shrink-0" style="color:var(--danger)">Entfernen</button>
+        </div>`);
+      row.querySelector("button").addEventListener("click", async () => {
+        const next = closing.filter((_, idx) => idx !== i);
+        await db.collection("checklistTemplates").doc(category).set({ closingItems: next }, { merge: true });
+      });
+      closingList.appendChild(row);
+    });
+    box.appendChild(closingList);
+    const addClosingRow = el(`
+      <div class="flex gap-2">
+        <input id="new-closing-input" type="text" placeholder="Neuer Zusatzpunkt…" class="flex-1 px-2 py-1.5 text-sm">
+        <button id="new-closing-add" class="btn btn-accent px-3 py-1.5 text-xs">+ Hinzufügen</button>
+      </div>`);
+    addClosingRow.querySelector("#new-closing-add").addEventListener("click", async () => {
+      const val = addClosingRow.querySelector("#new-closing-input").value.trim();
+      if (!val) return;
+      const next = closing.concat([val]);
+      await db.collection("checklistTemplates").doc(category).set({ closingItems: next }, { merge: true });
+    });
+    box.appendChild(addClosingRow);
+  }
+}
+
+/* =========================================================================
+   LOGBUCH (Schichtübergabe)
+   ========================================================================= */
+function renderLogbuchSection() {
+  if (currentUser.role !== "admin" && !state.logbookRoomId && state.currentStandortId && !state.logbookShowPicker) {
+    state.logbookRoomId = state.currentStandortId;
+  }
+  if (!state.logbookRoomId) return renderLogbookRoomPicker();
+  return renderLogbookBoard();
+}
+
+function renderLogbookRoomPicker() {
+  const wrap = el(`<div class="p-4 md:p-8 fade-in"></div>`);
+  wrap.appendChild(el(`
+    <div class="mb-5">
+      <h1 class="text-xl font-semibold">Logbuch</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Standort wählen</div>
+    </div>`));
+  if (!rooms.length) {
+    wrap.appendChild(el(`<div class="card p-10 text-center text-sm" style="color:var(--text-muted)">Erst müssen Räume angelegt werden (unter "Räume").</div>`));
+    return wrap;
+  }
+  const grid = el(`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>`);
+  rooms.forEach(r => {
+    const openCount = logbook.filter(l => l.roomId === r.id && !l.done).length;
+    const card = el(`
+      <button class="card p-4 text-left hover:opacity-90">
+        <div class="flex items-start justify-between mb-2">
+          <div class="font-semibold text-sm flex items-center gap-1">${r.icon ? `<span>${escapeHtml(r.icon)}</span>` : ""}${escapeHtml(r.name)}</div>
+          <span class="text-xs px-2 py-0.5 rounded-full tag-${r.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[r.category])}</span>
+        </div>
+        <div class="text-xs" style="color:var(--text-muted)">${openCount === 0 ? "Keine offenen Einträge" : openCount + " offen"}</div>
+      </button>`);
+    card.addEventListener("click", () => { state.logbookRoomId = r.id; state.logbookShowPicker = false; render(); });
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function renderLogbookBoard() {
+  const room = rooms.find(r => r.id === state.logbookRoomId);
+  const wrap = el(`<div class="p-4 md:p-8 fade-in max-w-2xl"></div>`);
+  if (!room) { state.logbookRoomId = null; return wrap; }
+
+  const header = el(`
+    <div class="mb-4">
+      <button id="back-to-picker" class="text-xs mb-1" style="color:var(--text-muted)">← Alle Standorte</button>
+      <h1 class="text-xl font-semibold">Logbuch · ${escapeHtml(room.name)}</h1>
+      <div class="text-sm" style="color:var(--text-muted)">Übergabe-Notizen für die nächste Schicht</div>
+    </div>`);
+  wrap.appendChild(header);
+  header.querySelector("#back-to-picker").addEventListener("click", () => { state.logbookRoomId = null; state.logbookShowPicker = true; render(); });
+
+  const addRow = el(`
+    <div class="mb-5">
+      <textarea id="logbook-input" rows="2" class="w-full px-3 py-2 text-sm mb-2" placeholder="Notiz für die nächste Schicht…"></textarea>
+      <button id="logbook-add" class="btn btn-accent px-3 py-2 text-sm">Eintragen</button>
+    </div>`);
+  wrap.appendChild(addRow);
+  addRow.querySelector("#logbook-add").addEventListener("click", async () => {
+    const input = addRow.querySelector("#logbook-input");
+    const text = input.value.trim();
+    if (!text) return;
+    await db.collection("logbook").add({
+      roomId: room.id, text, author: getAuthorName(), createdAt: Date.now(), done: false
+    });
+    input.value = "";
+  });
+
+  const roomEntries = logbook.filter(l => l.roomId === room.id);
+  const open = roomEntries.filter(l => !l.done);
+  const done = roomEntries.filter(l => l.done);
+
+  const openList = el(`<div class="space-y-2 mb-6"></div>`);
+  if (!open.length) openList.appendChild(el(`<div class="card p-6 text-center text-sm" style="color:var(--text-muted)">Nichts offen im Logbuch.</div>`));
+  open.forEach(l => openList.appendChild(renderLogbookRow(l)));
+  wrap.appendChild(openList);
+
+  const doneBox = el(`
+    <div>
+      <button id="toggle-logbook-done" class="text-xs font-medium mb-2" style="color:var(--text-muted)">
+        ${state.showLogbookDone ? "▾" : "▸"} Abgehakt · ${done.length}
+      </button>
+      <div id="logbook-done-list" class="space-y-2"></div>
+    </div>`);
+  doneBox.querySelector("#toggle-logbook-done").addEventListener("click", () => { state.showLogbookDone = !state.showLogbookDone; render(); });
+  if (state.showLogbookDone) {
+    const list = doneBox.querySelector("#logbook-done-list");
+    if (!done.length) list.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch nichts abgehakt.</div>`));
+    done.forEach(l => list.appendChild(renderLogbookRow(l)));
+  }
+  wrap.appendChild(doneBox);
+
+  return wrap;
+}
+
+function renderLogbookRow(l) {
+  const row = el(`
+    <div class="card p-3 flex items-start gap-3">
+      <input type="checkbox" ${l.done ? "checked" : ""} class="w-4 h-4 shrink-0 mt-0.5">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm ${l.done ? "line-through" : ""}" style="${l.done ? 'color:var(--text-muted)' : ''} white-space:pre-wrap">${escapeHtml(l.text)}</div>
+        <div class="text-xs mt-0.5" style="color:var(--text-muted)">${escapeHtml(l.author || "")} · ${formatDate(l.createdAt)}${l.done && l.doneBy ? ` · abgehakt von ${escapeHtml(l.doneBy)}` : ""}</div>
+      </div>
+      <button class="del-btn text-xs shrink-0" style="color:var(--danger)">Löschen</button>
+    </div>`);
+  row.querySelector('input[type="checkbox"]').addEventListener("change", async (e) => {
+    const checked = e.target.checked;
+    await db.collection("logbook").doc(l.id).update(
+      checked ? { done: true, doneBy: getAuthorName(), doneAt: Date.now() } : { done: false, doneBy: null, doneAt: null }
+    );
+    if (checked) triggerSuccessPulse();
+  });
+  row.querySelector(".del-btn").addEventListener("click", async () => {
+    if (confirm("Eintrag löschen?")) await db.collection("logbook").doc(l.id).delete();
+  });
+  return row;
 }
 
 /* =========================================================================
@@ -2166,20 +2685,18 @@ function openRoomFormDirect() {
   rooms = rooms.filter(r => r.id !== "new_temp");
 }
 
-function renderSettingsPeople() {
-  const wrap = el(`<div></div>`);
+function renderPersonalRoleBox(role) {
+  const box = el(`<div class="card p-4 mb-4"></div>`);
+  box.appendChild(el(`<div class="text-sm font-medium mb-3">${escapeHtml(ROLES[role].label)}-Zugänge</div>`));
+  const list = el(`<div class="space-y-2 mb-3"></div>`);
+  box.appendChild(list);
+  const addBtn = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ ${escapeHtml(ROLES[role].label)} hinzufügen</button>`);
+  box.appendChild(addBtn);
 
-  const adminBox = el(`<div class="card p-4 mb-4"></div>`);
-  adminBox.appendChild(el(`<div class="text-sm font-medium mb-3">Admin-Zugänge</div>`));
-  const adminList = el(`<div id="admin-list" class="space-y-2 mb-3"></div>`);
-  adminBox.appendChild(adminList);
-  const addAdminBtn = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ Admin hinzufügen</button>`);
-  adminBox.appendChild(addAdminBtn);
-  wrap.appendChild(adminBox);
-
-  fetchAdminUsers().then(list => {
-    adminList.innerHTML = "";
-    list.forEach(u => {
+  fetchUsersByRole(role).then(users => {
+    list.innerHTML = "";
+    if (!users.length) list.appendChild(el(`<div class="text-xs" style="color:var(--text-muted)">Noch niemand eingerichtet.</div>`));
+    users.forEach(u => {
       const row = el(`
         <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
           <span>${escapeHtml(u.name)}</span>
@@ -2196,36 +2713,49 @@ function renderSettingsPeople() {
       row.querySelector('[data-act="del"]').addEventListener("click", async () => {
         if (confirm(`${u.name} wirklich entfernen?`)) { await db.collection("users").doc(u.id).delete(); render(); }
       });
-      adminList.appendChild(row);
+      list.appendChild(row);
     });
   });
 
-  addAdminBtn.addEventListener("click", async () => {
-    const name = prompt("Name des neuen Admins:");
-    if (!name) return;
+  addBtn.addEventListener("click", async () => {
+    const name = prompt(`Name der/des neuen ${ROLES[role].label}:`);
+    if (!name || !name.trim()) return;
     const pin = prompt("PIN (4-6 Ziffern):");
     if (!pin || !/^[0-9]{4,6}$/.test(pin)) { alert("Ungültige PIN."); return; }
-    await db.collection("users").add({ name: name.trim(), role: "admin", pin: simpleHash(pin), createdAt: Date.now() });
+    await db.collection("users").add({ name: name.trim(), role, pin: simpleHash(pin), createdAt: Date.now() });
+    if (role === "admin") await fetchAdminUsers();
     render();
   });
 
-  const sharedBox = el(`<div class="card p-4"></div>`);
-  sharedBox.appendChild(el(`<div class="text-sm font-medium mb-3">Geteilte Zugänge (GM, Construction, Technik)</div>`));
-  sharedBox.appendChild(el(`<div class="text-xs mb-3" style="color:var(--text-muted)">Jede Rolle nutzt eine gemeinsame PIN.</div>`));
-  ["gm","construction","technik"].forEach(role => {
-    const row = el(`
-      <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
-        <span>${ROLES[role].label}</span>
-        <button class="btn btn-ghost px-2 py-1 text-xs">PIN setzen</button>
-      </div>`);
-    row.querySelector("button").addEventListener("click", async () => {
-      const pin = prompt(`Neue PIN für ${ROLES[role].label} (4-6 Ziffern):`);
-      if (pin && /^[0-9]{4,6}$/.test(pin)) await db.collection("roleAccounts").doc(role).set({ role, pin: simpleHash(pin) });
-      else if (pin !== null) alert("Ungültige PIN.");
+  return box;
+}
+
+function renderSettingsPeople() {
+  const wrap = el(`<div></div>`);
+
+  wrap.appendChild(renderPersonalRoleBox("admin"));
+  wrap.appendChild(renderPersonalRoleBox("gm"));
+
+  const sharedRoles = Object.keys(ROLES).filter(r => ROLES[r].shared);
+  if (sharedRoles.length) {
+    const sharedBox = el(`<div class="card p-4"></div>`);
+    sharedBox.appendChild(el(`<div class="text-sm font-medium mb-3">Geteilte Zugänge (${sharedRoles.map(r => ROLES[r].label).join(", ")})</div>`));
+    sharedBox.appendChild(el(`<div class="text-xs mb-3" style="color:var(--text-muted)">Jede Rolle nutzt eine gemeinsame PIN.</div>`));
+    sharedRoles.forEach(role => {
+      const row = el(`
+        <div class="flex items-center justify-between text-sm py-1.5 border-b last:border-0" style="border-color:var(--border)">
+          <span>${ROLES[role].label}</span>
+          <button class="btn btn-ghost px-2 py-1 text-xs">PIN setzen</button>
+        </div>`);
+      row.querySelector("button").addEventListener("click", async () => {
+        const pin = prompt(`Neue PIN für ${ROLES[role].label} (4-6 Ziffern):`);
+        if (pin && /^[0-9]{4,6}$/.test(pin)) await db.collection("roleAccounts").doc(role).set({ role, pin: simpleHash(pin) });
+        else if (pin !== null) alert("Ungültige PIN.");
+      });
+      sharedBox.appendChild(row);
     });
-    sharedBox.appendChild(row);
-  });
-  wrap.appendChild(sharedBox);
+    wrap.appendChild(sharedBox);
+  }
 
   return wrap;
 }
