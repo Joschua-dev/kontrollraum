@@ -1050,8 +1050,8 @@ function renderRoomDetail(isAdmin) {
   const room = rooms.find(r => r.id === state.openRoomId);
   if (!room) return el(`<div></div>`);
   const overlay = el(`
-    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
-      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35); height:100vh; height:100dvh">
+      <div class="card w-full md:max-w-lg md:rounded-xl rounded-none p-6 scrollbar-thin fade-in" style="max-height:100vh; max-height:100dvh; overflow-y:auto; -webkit-overflow-scrolling:touch">
         <div class="flex items-start justify-between mb-4">
           <div>
             <div class="text-xs mb-1"><span class="px-2 py-0.5 rounded-full tag-${room.category.toLowerCase()}">${escapeHtml(CATEGORY_LABELS[room.category])}</span></div>
@@ -1439,8 +1439,8 @@ function renderRepairDetail() {
   const room = rooms.find(r => r.id === t.roomId);
   const meta = statusMeta(t.status);
   const overlay = el(`
-    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
-      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35); height:100vh; height:100dvh">
+      <div class="card w-full md:max-w-lg md:rounded-xl rounded-none p-6 scrollbar-thin fade-in" style="max-height:100vh; max-height:100dvh; overflow-y:auto; -webkit-overflow-scrolling:touch">
         <div class="flex items-start justify-between mb-1">
           <span class="text-xs px-2 py-0.5 rounded-full" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
           <button id="close-ticket" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
@@ -1718,8 +1718,8 @@ function renderOrderDetail() {
   const room = rooms.find(r => r.id === o.roomId);
   const meta = orderStatusMeta(o.status);
   const overlay = el(`
-    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
-      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35); height:100vh; height:100dvh">
+      <div class="card w-full md:max-w-lg md:rounded-xl rounded-none p-6 scrollbar-thin fade-in" style="max-height:100vh; max-height:100dvh; overflow-y:auto; -webkit-overflow-scrolling:touch">
         <div class="flex items-start justify-between mb-1">
           <span class="text-xs px-2 py-0.5 rounded-full" style="background:${meta.soft}; color:${meta.color}">${meta.label}</span>
           <button id="close-order" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
@@ -2543,8 +2543,8 @@ function renderCalendarDayDetail(isAdmin) {
   const dayWeekKey = weekKeyOf(new Date(y, m - 1, d));
 
   const overlay = el(`
-    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35)">
-      <div class="card w-full md:max-w-lg md:h-auto h-full md:rounded-xl rounded-none p-6 overflow-y-auto scrollbar-thin fade-in">
+    <div class="fixed inset-0 z-40 flex items-stretch md:items-center justify-center" style="background:rgba(0,0,0,0.35); height:100vh; height:100dvh">
+      <div class="card w-full md:max-w-lg md:rounded-xl rounded-none p-6 scrollbar-thin fade-in" style="max-height:100vh; max-height:100dvh; overflow-y:auto; -webkit-overflow-scrolling:touch">
         <div class="flex items-start justify-between mb-4">
           <h2 class="text-lg font-semibold">${d}. ${MONTH_LABELS[m - 1]} ${y} <span class="text-sm font-normal" style="color:var(--text-muted)">(${WEEKDAY_LABELS[weekday]})</span></h2>
           <button id="close-day" class="btn btn-ghost px-3 py-1.5 text-sm">Schließen</button>
