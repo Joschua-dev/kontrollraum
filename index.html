@@ -31,6 +31,8 @@
     --text-muted: #726C5F;
     --accent: #D4A72C;
     --accent-ink: #201D18;
+    --status-ink: #FFFFFF;
+    --accent-text: #96700A;
     --tbg: #2F6F63;
     --tbg-soft: #E4F0EC;
     --tca: #3B5B7A;
@@ -50,6 +52,8 @@
       --text-muted: #9B968A;
       --accent: #D89A45;
       --accent-ink: #14171A;
+      --status-ink: #14171A;
+      --accent-text: #D89A45;
       --tbg: #4E9284;
       --tbg-soft: #1D2C29;
       --tca: #7095B8;
@@ -69,6 +73,8 @@
     --text-muted: #9B968A;
     --accent: #D89A45;
     --accent-ink: #14171A;
+    --status-ink: #14171A;
+    --accent-text: #D89A45;
     --tbg: #4E9284;
     --tbg-soft: #1D2C29;
     --tca: #7095B8;
@@ -199,14 +205,14 @@ let state = { screen: "loading", category: "TBG", openRoomId: null, roomEdit: fa
 
 const REPAIR_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
-  { key: "in_bearbeitung", label: "In Bearbeitung", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "in_bearbeitung", label: "In Bearbeitung", color: "var(--accent-text)", soft: "var(--tca-soft)" },
   { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
 ];
 function statusMeta(key) { return REPAIR_STATUSES.find(s => s.key === key) || REPAIR_STATUSES[0]; }
 
 const PIN_PRIORITIES = [
   { key: "hoch", label: "Hoch", color: "var(--danger)", soft: "var(--danger-soft)" },
-  { key: "mittel", label: "Mittel", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "mittel", label: "Mittel", color: "var(--accent-text)", soft: "var(--tca-soft)" },
   { key: "niedrig", label: "Niedrig", color: "var(--text-muted)", soft: "var(--surface-2)" }
 ];
 function pinPriorityMeta(key) { return PIN_PRIORITIES.find(p => p.key === key) || PIN_PRIORITIES[1]; }
@@ -214,7 +220,7 @@ function pinPriorityRank(key) { return PIN_PRIORITIES.findIndex(p => p.key === k
 
 const ORDER_STATUSES = [
   { key: "offen", label: "Offen", color: "var(--danger)", soft: "var(--danger-soft)" },
-  { key: "bestellt", label: "Bestellt", color: "var(--accent)", soft: "var(--tca-soft)" },
+  { key: "bestellt", label: "Bestellt", color: "var(--accent-text)", soft: "var(--tca-soft)" },
   { key: "erledigt", label: "Erledigt", color: "var(--success)", soft: "var(--tbg-soft)" }
 ];
 function orderStatusMeta(key) { return ORDER_STATUSES.find(s => s.key === key) || ORDER_STATUSES[0]; }
@@ -677,7 +683,7 @@ function renderLocationPicker() {
       const btn = el(`
         <button class="card w-full p-4 text-left flex items-center justify-between" style="${isLast ? 'border-color:var(--accent)' : ''}">
           <span class="text-sm font-medium">${r.icon ? escapeHtml(r.icon) + " " : ""}${escapeHtml(r.name)}</span>
-          ${isLast ? '<span class="text-xs" style="color:var(--accent)">zuletzt</span>' : ''}
+          ${isLast ? '<span class="text-xs" style="color:var(--accent-text)">zuletzt</span>' : ''}
         </button>`);
       btn.addEventListener("click", async () => {
         state.currentStandortId = r.id;
@@ -852,7 +858,7 @@ function renderAppShell() {
     const banner = el(`
       <div class="flex items-center justify-between gap-2 px-4 md:px-8 py-2 text-sm flex-wrap" style="background:var(--surface-2); border-bottom:1px solid var(--border)">
         <span>📍 Aktuell: <span class="font-medium">${escapeHtml(currentRoom ? currentRoom.name : "–")}</span>${statusBits.length ? ` <span style="color:var(--text-muted)">· ${statusBits.join(" · ")}</span>` : ` <span style="color:var(--text-muted)">· alles erledigt ✓</span>`}</span>
-        <button id="switch-location" class="text-xs font-medium" style="color:var(--accent)">Wechseln</button>
+        <button id="switch-location" class="text-xs font-medium" style="color:var(--accent-text)">Wechseln</button>
       </div>`);
     banner.querySelector("#switch-location").addEventListener("click", () => goToLocationPicker());
     main.appendChild(banner);
@@ -1309,7 +1315,7 @@ function renderRoomForm(room) {
     };
     ROOM_FIELDS.forEach(f => { data[f.key] = form.querySelector(`#f-${f.key}`).value.trim(); });
     if (!data.name) { alert("Bitte einen Namen angeben."); return; }
-    if (room) await db.collection("rooms").doc(room.id).update(data);
+    if (room && !room.__isNew) await db.collection("rooms").doc(room.id).update(data);
     else { const ref = await db.collection("rooms").add(data); state.openRoomId = ref.id; }
     state.roomEdit = false;
     render();
@@ -1320,7 +1326,7 @@ function renderRoomForm(room) {
 function openRoomForm(room) {
   state.openRoomId = "new";
   state.roomEdit = true;
-  const tempRoom = { id: "new", name: "", category: state.category };
+  const tempRoom = { id: "new", name: "", category: state.category, __isNew: true };
   rooms.push(tempRoom);
   render();
   rooms = rooms.filter(r => r.id !== "new");
@@ -1508,7 +1514,7 @@ function renderRepairDetail() {
   const statusBox = overlay.querySelector("#status-buttons");
   REPAIR_STATUSES.forEach(s => {
     const active = t.status === s.key;
-    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
+    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--status-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
     b.addEventListener("click", async () => {
       await db.collection("repairs").doc(t.id).update({ status: s.key, updatedAt: Date.now() });
       if (s.key === "erledigt" && t.status !== "erledigt") triggerSuccessPulse();
@@ -1803,7 +1809,7 @@ function renderOrderDetail() {
   const statusBox = overlay.querySelector("#order-status-buttons");
   ORDER_STATUSES.forEach(s => {
     const active = o.status === s.key;
-    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--accent-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
+    const b = el(`<button class="btn px-3 py-1.5 text-xs" style="${active ? `background:${s.color}; color:var(--status-ink)` : 'background:var(--surface-2); color:var(--text)'}">${s.label}</button>`);
     b.addEventListener("click", async () => {
       await db.collection("orders").doc(o.id).update({ status: s.key, updatedAt: Date.now() });
       if (s.key === "erledigt" && o.status !== "erledigt") triggerSuccessPulse();
@@ -1908,9 +1914,9 @@ function renderChecklistBoard() {
 
   const dateNav = el(`
     <div class="flex items-center justify-between mb-5 card p-2">
-      <button id="date-prev" class="btn btn-ghost px-3 py-1.5 text-sm" ${date <= minDate ? "disabled style=opacity:0.4" : ""}>←</button>
+      <button id="date-prev" class="btn btn-ghost px-3 py-1.5 text-sm" ${date <= minDate ? 'disabled style="opacity:0.4"' : ""}>←</button>
       <div class="text-sm font-medium">${date === todayIso ? "Heute" : date} <span style="color:var(--text-muted); font-weight:400">${date === todayIso ? `(${date})` : ""}</span></div>
-      <button id="date-next" class="btn btn-ghost px-3 py-1.5 text-sm" ${date >= todayIso ? "disabled style=opacity:0.4" : ""}>→</button>
+      <button id="date-next" class="btn btn-ghost px-3 py-1.5 text-sm" ${date >= todayIso ? 'disabled style="opacity:0.4"' : ""}>→</button>
     </div>`);
   if (date > minDate) dateNav.querySelector("#date-prev").addEventListener("click", () => { state.checklistDate = isoOf(new Date(new Date(date).getTime() - 86400000)); render(); });
   if (date < todayIso) dateNav.querySelector("#date-next").addEventListener("click", () => { state.checklistDate = isoOf(new Date(new Date(date).getTime() + 86400000)); render(); });
@@ -2372,7 +2378,7 @@ function renderWeekView() {
       <button class="card p-3 text-left flex flex-col gap-1.5" style="${isToday ? 'border-color:var(--accent)' : ''} min-height:110px">
         <div class="flex items-baseline justify-between">
           <span class="text-xs font-medium" style="color:${isToday ? 'var(--accent)' : 'var(--text-muted)'}">${WEEKDAY_LABELS[day.weekday]}</span>
-          <span class="text-sm font-semibold" style="${isToday ? 'color:var(--accent)' : ''}">${day.day}.</span>
+          <span class="text-sm font-semibold" style="${isToday ? 'color:var(--accent-text)' : ''}">${day.day}.</span>
         </div>
         <div class="flex-1 space-y-1"></div>
       </button>`);
@@ -2775,7 +2781,7 @@ function renderSettingsRooms() {
 }
 function openRoomFormDirect() {
   state.openRoomId = "new_temp";
-  const tempRoom = { id: "new_temp", name: "", category: state.category };
+  const tempRoom = { id: "new_temp", name: "", category: state.category, __isNew: true };
   rooms.push(tempRoom);
   state.roomEdit = true;
   render();
