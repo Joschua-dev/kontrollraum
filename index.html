@@ -750,7 +750,14 @@ function renderAppShell() {
   let sidebarHeaderHtml = `
     <div class="text-lg font-semibold display">Kontrollraum</div>
     <div class="text-xs mt-0.5" style="color:var(--text-muted)">Hamburg</div>`;
-  if (!isAdmin && state.currentStandortId) {
+  if (isAdmin) {
+    sidebarHeaderHtml = `
+      <div style="background:#14171A; border-radius:8px; padding:10px" class="flex items-center justify-center gap-2">
+        <img src="logo-tbg.png" alt="Team Breakout Hamburg" style="max-height:32px; width:auto">
+        <div style="width:1px; height:24px; background:rgba(255,255,255,0.2)"></div>
+        <img src="logo-tca.png" alt="The Cod3 Agency" style="max-height:24px; width:auto">
+      </div>`;
+  } else if (state.currentStandortId) {
     const activeRoom = rooms.find(r => r.id === state.currentStandortId);
     if (activeRoom && activeRoom.category === "TBG") {
       sidebarHeaderHtml = `<div style="background:#14171A; border-radius:8px; padding:10px"><img src="logo-tbg.png" alt="Team Breakout Hamburg" style="max-width:100%; height:auto; display:block"></div>`;
