@@ -1086,14 +1086,34 @@ function renderRoomDetail(isAdmin) {
         emergBox.querySelector("#emerg-arrow").textContent = hidden ? "▾" : "▸";
       });
     }
-    ROOM_FIELDS.forEach(f => {
-      const val = room[f.key];
-      body.appendChild(el(`
-        <div class="mb-4">
-          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
-          <div class="text-sm whitespace-pre-wrap">${val ? escapeHtml(val) : '<span style="color:var(--text-muted)">—</span>'}</div>
-        </div>`));
-    });
+    if (room.theme) {
+      body.appendChild(el(`<div class="text-sm whitespace-pre-wrap mb-4">${escapeHtml(room.theme)}</div>`));
+    }
+    const statBits = [
+      room.playerCount ? { label: "Spieler", val: room.playerCount } : null,
+      room.difficulty ? { label: "Schwierigkeit", val: room.difficulty } : null,
+      room.duration ? { label: "Dauer", val: room.duration } : null
+    ].filter(Boolean);
+    if (statBits.length) {
+      const statRow = el(`<div class="grid grid-cols-3 gap-2 mb-4"></div>`);
+      statBits.forEach(s => statRow.appendChild(el(`
+        <div class="card p-2 text-center">
+          <div class="text-sm font-semibold">${escapeHtml(s.val)}</div>
+          <div class="text-xs" style="color:var(--text-muted)">${s.label}</div>
+        </div>`)));
+      body.appendChild(statRow);
+    }
+    const opsFields = ROOM_FIELDS.filter(f => ["resetGuide", "techContact", "access", "notes"].includes(f.key) && room[f.key]);
+    if (opsFields.length) {
+      body.appendChild(el(`<div class="text-xs font-semibold mb-2" style="color:var(--text-muted); letter-spacing:0.03em; text-transform:uppercase">Betrieb</div>`));
+      opsFields.forEach(f => {
+        body.appendChild(el(`
+          <div class="mb-3">
+            <div class="text-xs font-medium mb-0.5" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
+            <div class="text-sm whitespace-pre-wrap">${escapeHtml(room[f.key])}</div>
+          </div>`));
+      });
+    }
     if (room.faq && room.faq.length) {
       body.appendChild(el(`<div class="text-sm font-medium mb-2 mt-2 pt-3 border-t" style="border-color:var(--border)">Häufige Fragen</div>`));
       room.faq.forEach(item => {
@@ -1103,6 +1123,9 @@ function renderRoomDetail(isAdmin) {
             <div class="text-sm mt-0.5 whitespace-pre-wrap" style="color:var(--text-muted)">${escapeHtml(item.a)}</div>
           </div>`));
       });
+    }
+    if (!body.children.length) {
+      body.appendChild(el(`<div class="text-sm" style="color:var(--text-muted)">Noch keine Details hinterlegt.</div>`));
     }
   } else {
     body.appendChild(renderRoomForm(room));
@@ -1123,58 +1146,111 @@ function renderRoomDetail(isAdmin) {
 }
 
 function renderRoomForm(room) {
-  const form = el(`<div></div>`);
-  const nameRow = el(`
-    <div class="mb-3 flex gap-2">
-      <div style="width:64px">
-        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Icon</div>
-        <input id="f-icon" type="text" maxlength="4" class="w-full px-2 py-2 text-sm text-center" style="font-size:20px" value="${escapeHtml(room ? (room.icon || "") : "")}" placeholder="🏠">
-      </div>
-      <div class="flex-1">
-        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Name</div>
-        <input id="f-name" type="text" class="w-full px-3 py-2 text-sm" value="${escapeHtml(room ? room.name : "")}">
-      </div>
-    </div>`);
-  form.appendChild(nameRow);
-  const catRow = el(`
-    <div class="mb-3">
-      <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Kategorie</div>
-      <select id="f-category" class="w-full px-3 py-2 text-sm">
-        <option value="TBG" ${room && room.category === "TBG" ? "selected" : ""}>TBG</option>
-        <option value="TCA" ${room && room.category === "TCA" ? "selected" : ""}>TCA</option>
-      </select>
-    </div>`);
-  form.appendChild(catRow);
+  const form = el(`<div class="space-y-5"></div>`);
   const FIELD_PLACEHOLDERS = {
-    playerCount: "z.B. 2–6 Spieler",
-    difficulty: "z.B. Mittel, 3/5",
-    duration: "z.B. 60 Minuten",
-    techContact: "z.B. Name, Telefonnummer"
+    playerCount: "z.B. 2–6",
+    difficulty: "z.B. Mittel",
+    duration: "z.B. 60 Min.",
+    techContact: "Name, Telefonnummer"
   };
-  ROOM_FIELDS.forEach(f => {
-    const isArea = ["theme", "resetGuide", "access", "notes"].includes(f.key);
-    const val = room ? (room[f.key] || "") : "";
-    const placeholder = FIELD_PLACEHOLDERS[f.key] || "";
-    const field = el(`
-      <div class="mb-3">
-        <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">${escapeHtml(f.label)}</div>
-        ${isArea
-          ? `<textarea id="f-${f.key}" rows="3" class="w-full px-3 py-2 text-sm" placeholder="${escapeHtml(placeholder)}">${escapeHtml(val)}</textarea>`
-          : `<input id="f-${f.key}" type="text" class="w-full px-3 py-2 text-sm" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(val)}">`}
-      </div>`);
-    form.appendChild(field);
-  });
+  const v = (key) => room ? escapeHtml(room[key] || "") : "";
 
-  const emergRow = el(`
-    <div class="mb-4 p-3 rounded-lg" style="border:1px solid var(--danger)">
-      <div class="text-xs font-medium mb-1" style="color:var(--danger)">🚨 Notfall-Infos (Notausgang, Not-Entriegelung, wen anrufen)</div>
-      <textarea id="f-emergencyInfo" rows="3" class="w-full px-3 py-2 text-sm" placeholder="z.B. Notausgang links neben Eingang, Not-Entriegelung unter der Theke, im Ernstfall Alex anrufen: 0170...">${escapeHtml(room ? (room.emergencyInfo || "") : "")}</textarea>
+  const sectionTitle = (text) => `<div class="text-xs font-semibold mb-2" style="color:var(--text-muted); letter-spacing:0.03em; text-transform:uppercase">${text}</div>`;
+
+  // Grunddaten
+  const basicsSection = el(`
+    <div>
+      ${sectionTitle("Grunddaten")}
+      <div class="card p-4 space-y-3">
+        <div class="flex gap-2">
+          <div style="width:64px">
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Icon</div>
+            <input id="f-icon" type="text" maxlength="4" class="w-full px-2 py-2 text-sm text-center" style="font-size:20px" value="${v("icon")}" placeholder="🏠">
+          </div>
+          <div class="flex-1">
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Name</div>
+            <input id="f-name" type="text" class="w-full px-3 py-2 text-sm" value="${v("name")}">
+          </div>
+        </div>
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Kategorie</div>
+          <select id="f-category" class="w-full px-3 py-2 text-sm">
+            <option value="TBG" ${room && room.category === "TBG" ? "selected" : ""}>TBG</option>
+            <option value="TCA" ${room && room.category === "TCA" ? "selected" : ""}>TCA</option>
+          </select>
+        </div>
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Thema / Story</div>
+          <textarea id="f-theme" rows="2" class="w-full px-3 py-2 text-sm">${v("theme")}</textarea>
+        </div>
+      </div>
     </div>`);
-  form.appendChild(emergRow);
+  form.appendChild(basicsSection);
 
+  // Spieldetails
+  const detailsSection = el(`
+    <div>
+      ${sectionTitle("Spieldetails")}
+      <div class="card p-4">
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Spieler</div>
+            <input id="f-playerCount" type="text" class="w-full px-2 py-2 text-sm" placeholder="${FIELD_PLACEHOLDERS.playerCount}" value="${v("playerCount")}">
+          </div>
+          <div>
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Schwierigkeit</div>
+            <input id="f-difficulty" type="text" class="w-full px-2 py-2 text-sm" placeholder="${FIELD_PLACEHOLDERS.difficulty}" value="${v("difficulty")}">
+          </div>
+          <div>
+            <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Dauer</div>
+            <input id="f-duration" type="text" class="w-full px-2 py-2 text-sm" placeholder="${FIELD_PLACEHOLDERS.duration}" value="${v("duration")}">
+          </div>
+        </div>
+      </div>
+    </div>`);
+  form.appendChild(detailsSection);
+
+  // Betrieb
+  const opsSection = el(`
+    <div>
+      ${sectionTitle("Betrieb")}
+      <div class="card p-4 space-y-3">
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Reset-Anleitung</div>
+          <textarea id="f-resetGuide" rows="3" class="w-full px-3 py-2 text-sm">${v("resetGuide")}</textarea>
+        </div>
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Technik-Kontakt</div>
+          <input id="f-techContact" type="text" class="w-full px-3 py-2 text-sm" placeholder="${FIELD_PLACEHOLDERS.techContact}" value="${v("techContact")}">
+        </div>
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Zugänge & Codes</div>
+          <textarea id="f-access" rows="3" class="w-full px-3 py-2 text-sm">${v("access")}</textarea>
+        </div>
+        <div>
+          <div class="text-xs font-medium mb-1" style="color:var(--text-muted)">Besonderheiten / Notizen</div>
+          <textarea id="f-notes" rows="3" class="w-full px-3 py-2 text-sm">${v("notes")}</textarea>
+        </div>
+      </div>
+    </div>`);
+  form.appendChild(opsSection);
+
+  // Notfall
+  const emergSection = el(`
+    <div>
+      ${sectionTitle("Sicherheit")}
+      <div class="p-4 rounded-lg" style="border:1px solid var(--danger); background:var(--danger-soft)">
+        <div class="text-xs font-medium mb-1" style="color:var(--danger)">🚨 Notfall-Infos (Notausgang, Not-Entriegelung, wen anrufen)</div>
+        <textarea id="f-emergencyInfo" rows="3" class="w-full px-3 py-2 text-sm" placeholder="z.B. Notausgang links neben Eingang, Not-Entriegelung unter der Theke, im Ernstfall Alex anrufen: 0170...">${v("emergencyInfo")}</textarea>
+      </div>
+    </div>`);
+  form.appendChild(emergSection);
+
+  // FAQ
   const faqDraft = room && room.faq ? room.faq.map(f => ({ ...f })) : [];
-  const faqBox = el(`<div class="mb-4 pt-3 border-t" style="border-color:var(--border)"></div>`);
-  faqBox.appendChild(el(`<div class="text-xs font-medium mb-2" style="color:var(--text-muted)">Häufige Fragen (FAQ)</div>`));
+  const faqBox = el(`<div></div>`);
+  faqBox.appendChild(el(sectionTitle("FAQ")));
+  const faqCard = el(`<div class="card p-4"></div>`);
   const faqList = el(`<div class="space-y-2 mb-2"></div>`);
   function renderFaqList() {
     faqList.innerHTML = "";
@@ -1194,10 +1270,11 @@ function renderRoomForm(room) {
     });
   }
   renderFaqList();
-  faqBox.appendChild(faqList);
+  faqCard.appendChild(faqList);
   const addFaqBtn = el(`<button class="btn btn-ghost px-3 py-1.5 text-xs">+ Frage hinzufügen</button>`);
   addFaqBtn.addEventListener("click", () => { faqDraft.push({ q: "", a: "" }); renderFaqList(); });
-  faqBox.appendChild(addFaqBtn);
+  faqCard.appendChild(addFaqBtn);
+  faqBox.appendChild(faqCard);
   form.appendChild(faqBox);
 
   const saveBtn = el(`<button id="save-room" class="btn btn-accent w-full py-2 text-sm mt-2">Speichern</button>`);
