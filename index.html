@@ -6,7 +6,7 @@
 <title>Kontrollraum</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<meta name="theme-color" content="#C07C21">
+<meta name="theme-color" content="#E3C768">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kontrollraum">
@@ -532,9 +532,12 @@ function renderLogin() {
   const wrap = el(`
     <div class="min-h-screen flex items-center justify-center p-6">
       <div class="w-full max-w-sm fade-in">
+        <div class="rounded-xl p-5 mb-6 flex flex-col items-center gap-3" style="background:#14171A">
+          <img src="logo-tbg.png" alt="Team Breakout Hamburg" style="max-width:200px; width:100%; height:auto">
+          <img src="logo-tca.png" alt="The Cod3 Agency" style="max-width:160px; width:70%; height:auto">
+        </div>
         <div class="text-center mb-8">
-          <div class="text-2xl font-semibold display">Kontrollraum</div>
-          <div class="text-sm mt-1" style="color:var(--text-muted)">Wählt euren Zugang</div>
+          <div class="text-sm" style="color:var(--text-muted)">Kontrollraum · Wählt euren Zugang</div>
         </div>
         <div id="role-grid" class="grid grid-cols-2 gap-3 mb-2"></div>
         <div id="login-step2"></div>
