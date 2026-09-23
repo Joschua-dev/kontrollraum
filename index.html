@@ -29,8 +29,8 @@
     --border: #E5E1D8;
     --text: #201D18;
     --text-muted: #726C5F;
-    --accent: #C07C21;
-    --accent-ink: #FFFFFF;
+    --accent: #D4A72C;
+    --accent-ink: #201D18;
     --tbg: #2F6F63;
     --tbg-soft: #E4F0EC;
     --tca: #3B5B7A;
@@ -747,12 +747,22 @@ const NAV_ITEMS = [
 
 function renderAppShell() {
   const isAdmin = currentUser && currentUser.role === "admin";
+  let sidebarHeaderHtml = `
+    <div class="text-lg font-semibold display">Kontrollraum</div>
+    <div class="text-xs mt-0.5" style="color:var(--text-muted)">Hamburg</div>`;
+  if (!isAdmin && state.currentStandortId) {
+    const activeRoom = rooms.find(r => r.id === state.currentStandortId);
+    if (activeRoom && activeRoom.category === "TBG") {
+      sidebarHeaderHtml = `<div style="background:#14171A; border-radius:8px; padding:10px"><img src="logo-tbg.png" alt="Team Breakout Hamburg" style="max-width:100%; height:auto; display:block"></div>`;
+    } else if (activeRoom && activeRoom.category === "TCA") {
+      sidebarHeaderHtml = `<div style="background:#14171A; border-radius:8px; padding:10px"><img src="logo-tca.png" alt="The Cod3 Agency" style="max-width:100%; height:auto; display:block"></div>`;
+    }
+  }
   const wrap = el(`
     <div class="min-h-screen flex flex-col md:flex-row">
       <aside class="md:w-56 w-full md:h-screen border-b md:border-b-0 md:border-r flex md:flex-col" style="border-color:var(--border); background:var(--surface)">
         <div class="p-4 hidden md:block">
-          <div class="text-lg font-semibold display">Kontrollraum</div>
-          <div class="text-xs mt-0.5" style="color:var(--text-muted)">Hamburg</div>
+          ${sidebarHeaderHtml}
         </div>
         <nav id="nav" class="flex md:flex-col flex-1 overflow-x-auto md:overflow-visible px-2 md:px-3 gap-1 py-2 md:py-0 scrollbar-thin"></nav>
         <div class="hidden md:block p-3 border-t" style="border-color:var(--border)">
